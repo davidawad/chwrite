@@ -1117,3 +1117,39 @@ If `setfacl`/`getfacl` aren't available, or the target filesystem was mounted wi
 **`acceptance`** — matrix over `[macos-latest, ubuntu-latest, windows-latest]`. Steps: checkout, set up Python 3.11+, run `scripts/acceptance_test.py` (stdlib-only, cross-platform, no `uv`/dev deps required — it's meant to double as documentation-by-execution of section 23's acceptance test) against the committed `chwrite.py`. This script is the executable form of section 23: init a throwaway repo (under the runner's own temp dir, e.g. `tempfile.mkdtemp()` — never inside the checked-out working tree), write a `.chwrite`, apply, assert the write fails while protected, assert `verify` catches an out-of-band flag removal, assert `unlock`/re-`apply` round-trip, assert idempotency (apply x10). It should skip (not fail) any platform-specific assertion that isn't applicable everywhere (e.g. a `deny-group` ACL-caveat check only meaningful on Linux) rather than hard-coding OS branches inline in the CI YAML.
 
 Both jobs trigger on `push` and `pull_request`. No Docker-based filesystem matrix (ext4/xfs/btrfs/etc.) for now — real OS runners via the matrix above are the bar; this can be revisited later if chwrite needs to support filesystems not backing any of the three GitHub-hosted runner images.
+
+---
+
+## 31. Packaging & Distribution
+
+`chwrite.py` at repo root (section 19/26) remains the ground-truth distributable — every packaging surface below is a thin wrapper around it or the same generated artifact, never a second implementation. All of this is versioned off `pyproject.toml`'s `version` field and git tags of the form `vX.Y.Z` (section 31.7 covers the release process that keeps them in sync).
+
+Honesty rule, consistent with the rest of this spec: a packaging job that requires a credential/account/repo chwrite's own CI doesn't control (a PyPI trusted-publisher link, an npm token, a Homebrew tap repo, an AUR SSH key, a winget-pkgs PR) MUST be wired up and ready to run, but MUST NOT be claimed as "done" until that one-time external setup is actually completed by a human with those credentials. `packaging/README.md` tracks exactly which surfaces are live vs. wired-but-pending.
+
+### 31.1 pip / pipx (PyPI)
+
+The most natural fit — `src/chwrite/` is already a proper package. Add a console-script entry point (`[project.scripts] chwrite = "chwrite.cli:main"`) so `pip install chwrite` / `pipx install chwrite` puts a working `chwrite` on PATH without needing the bundled single-file artifact at all (pipx/pip users get the real package, not the curl'd bundle — both are valid, equally-supported install paths). Publish via PyPI's Trusted Publisher (OIDC from GitHub Actions — no long-lived token stored in this repo) on tagged releases.
+
+### 31.2 npm
+
+chwrite has no JS and no runtime dependencies, so the npm package is a thin, offline postinstall-free wrapper: ships the current `chwrite.py` directly inside the npm tarball (`files` in `package.json`), with a `bin` entry that execs it via the user's `python3`. No download-at-install-time step — that would add a network dependency and supply-chain surface this project has otherwise avoided everywhere else (section 18's whole ethos). Lives under `packaging/npm/`.
+
+### 31.3 Homebrew
+
+A formula (`packaging/homebrew/chwrite.rb`) in a personal tap (`homebrew-chwrite`, a separate repo — Homebrew requires taps to be their own repo named `homebrew-<name>`; this is a one-time manual repo-creation step, not something CI can bootstrap on its own). The formula downloads the tagged GitHub release source tarball, verifies its sha256, and installs `chwrite.py` + the `chwrite` shim into the Cellar with a symlink into `bin`.
+
+### 31.4 AUR (Arch Linux)
+
+`packaging/aur/PKGBUILD` — downloads the same tagged release tarball, installs `chwrite.py`/`chwrite` into `/usr/bin`. Publishing requires push access to a personal AUR git repo tied to an AUR account's SSH key (one-time manual setup).
+
+### 31.5 Debian/apt (.deb)
+
+`packaging/debian/` (control, rules, changelog, compat, source/format) builds a `.deb` via `dpkg-buildpackage`. CI attaches the built `.deb` as a GitHub Release asset on every tag regardless of whether a hosted apt repo exists — `dpkg -i` from the downloaded asset always works. A real `apt install chwrite` (PPA or self-hosted apt repo) is a separate, later, optional step, not required for this to be useful.
+
+### 31.6 winget (Windows)
+
+`packaging/winget/` — a three-file manifest (version/installer/locale) targeting the existing `chwrite.cmd` launcher, submitted via PR to `microsoft/winget-pkgs` (not self-hostable, requires an actual PR against Microsoft's repo). This is the roughest fit of the six surfaces here — winget expects installer semantics (EXE/MSI/portable zip) more than "run this script with an interpreter" — so document the chosen manifest type's tradeoffs explicitly rather than pretending it's as clean a fit as pip/npm/brew.
+
+### 31.7 Release process
+
+Tagging `vX.Y.Z` (matching `pyproject.toml`'s `version`) and pushing the tag triggers `.github/workflows/release.yml`, which: builds the sdist/wheel, rebuilds and verifies the `chwrite.py` bundle is not stale (reusing section 26.1/30's staleness check), computes checksums for every artifact, creates a GitHub Release attaching `chwrite.py`/`chwrite`/`chwrite.cmd`/sdist/wheel/`.deb`/`checksums.txt`, and runs whichever publish jobs (PyPI, npm, Homebrew formula bump, AUR PKGBUILD bump) have their required secrets configured — a missing secret skips that job with a clear log line, it never fails the whole release. `packaging/README.md` is the single source of truth for which surfaces are actually live at any given time.

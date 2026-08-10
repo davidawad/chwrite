@@ -1,0 +1,31 @@
+{
+  "name": "chwrite",
+  "version": "1.0.0",
+  "description": "Protect files in a Git repository from unwanted modification. npm wrapper around the dependency-free chwrite.py CLI - no JS implementation, no runtime dependencies, no download-at-install step.",
+  "bin": {
+    "chwrite": "bin/chwrite.js"
+  },
+  "files": [
+    "bin/chwrite.js",
+    "chwrite.py",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=14"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "git",
+    "cli",
+    "file-protection",
+    "immutable",
+    "chattr",
+    "chflags",
+    "acl"
+  ]
+}

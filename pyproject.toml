@@ -5,6 +5,9 @@ description = "Protect files in a Git repository from unwanted modification."
 requires-python = ">=3.11"
 dependencies = []
 
+[project.scripts]
+chwrite = "chwrite.cli:main"
+
 [dependency-groups]
 dev = [
   "ruff>=0.6",

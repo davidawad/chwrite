@@ -1,0 +1,230 @@
+name: Release
+
+# Triggered by pushing a tag matching vX.Y.Z (must match pyproject.toml's
+# `version`, SPEC.md section 31.7). Every publish job below is gated on a
+# repo secret/variable that only exists once a human has done the matching
+# one-time external setup (PyPI Trusted Publisher, npm login, Homebrew tap
+# repo, AUR SSH key). A missing secret/variable makes that job SKIP, never
+# fail the release - see packaging/README.md for exactly what's live vs.
+# wired-but-pending at any given time.
+
+"on":
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-artifacts:
+    name: build-artifacts
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      # Same gate as ci.yml's lint-and-unit job, run again here so a release
+      # can never ship a version CI didn't already validate on its own tag
+      # commit (belt and suspenders - this job doesn't depend on ci.yml).
+      - name: ruff / pyright / pytest
+        run: |
+          uv run ruff format --check .
+          uv run ruff check .
+          uv run pyright
+          uv run pytest tests/ --cov=src/chwrite --cov-fail-under=85 -q
+
+      - name: chwrite.py bundle is not stale (SPEC.md section 26.1)
+        run: |
+          python3 scripts/bundle.py
+          git diff --quiet -- chwrite.py || {
+            echo "chwrite.py is out of date relative to src/chwrite/; run 'just build' and commit it" >&2
+            git diff -- chwrite.py
+            exit 1
+          }
+
+      - name: Version consistency (tag vs pyproject.toml)
+        run: |
+          PYPROJECT_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$PYPROJECT_VERSION" != "${{ steps.version.outputs.version }}" ]; then
+            echo "tag v${{ steps.version.outputs.version }} does not match pyproject.toml version $PYPROJECT_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Run the real acceptance test on this runner too
+        run: python3 scripts/acceptance_test.py
+
+      - name: Build sdist + wheel (PyPI, SPEC.md section 31.1)
+        run: uv build
+
+      - name: Refresh packaging/npm's bundled chwrite.py copy (SPEC.md section 31.2)
+        run: cp chwrite.py packaging/npm/chwrite.py
+
+      - name: Build npm tarball
+        run: |
+          cd packaging/npm
+          npm pack
+          mv chwrite-*.tgz "$GITHUB_WORKSPACE/dist/"
+
+      - name: Build .deb (SPEC.md section 31.5)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dpkg-dev debhelper
+          cp -r packaging/debian debian
+          dpkg-buildpackage -us -uc -b
+          mv ../chwrite_*.deb dist/ 2>/dev/null || mv ../chwrite*.deb dist/
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Upload build artifacts (shared with publish jobs below)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
+            chwrite.py
+            chwrite
+            chwrite.cmd
+          generate_release_notes: true
+
+  publish-pypi:
+    name: publish-pypi
+    needs: build-artifacts
+    runs-on: ubuntu-latest
+    # PyPI Trusted Publishing needs no stored token, but the trust
+    # relationship itself (PyPI project settings -> this repo/workflow) is a
+    # one-time step only the PyPI account owner can do. Until that's done,
+    # this job cleanly no-ops rather than failing the release - flip
+    # PYPI_TRUSTED_PUBLISHING_READY to "true" in repo Settings > Variables
+    # once it's configured. See packaging/README.md.
+    if: vars.PYPI_TRUSTED_PUBLISHING_READY == 'true'
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Remove non-PyPI artifacts before upload
+        run: find dist -name "*.deb" -o -name "*.tgz" -o -name "checksums.txt" -delete
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-npm:
+    name: publish-npm
+    needs: build-artifacts
+    runs-on: ubuntu-latest
+    # NPM_TOKEN is a repo secret only a human with npm publish rights on the
+    # `chwrite` package name can create (npm login, then an automation
+    # token). Missing secret = skip, not fail. See packaging/README.md.
+    if: ${{ secrets.NPM_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Publish
+        working-directory: packaging/npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > .npmrc
+          npm publish --access public
+
+  bump-homebrew-tap:
+    name: bump-homebrew-tap
+    needs: build-artifacts
+    runs-on: ubuntu-latest
+    # Requires the one-time-created `homebrew-chwrite` tap repo (SPEC.md
+    # section 31.3) and a fine-grained PAT scoped to it, stored as
+    # HOMEBREW_TAP_TOKEN. This job cannot create the tap repo itself.
+    if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute release tarball sha256 and bump formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION="${{ needs.build-artifacts.outputs.version }}"
+          URL="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/v${VERSION}.tar.gz"
+          SHA256=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY_OWNER}/homebrew-chwrite.git" tap
+          sed -i \
+            -e "s#url \".*\"#url \"${URL}\"#" \
+            -e "s#sha256 \".*\"#sha256 \"${SHA256}\"#" \
+            tap/Formula/chwrite.rb
+          cd tap
+          git config user.name "chwrite-release-bot"
+          git config user.email "noreply@example.invalid"
+          git commit -am "chwrite ${VERSION}" --allow-empty
+          git push
+
+  bump-aur:
+    name: bump-aur
+    needs: build-artifacts
+    runs-on: ubuntu-latest
+    # Requires an AUR account's SSH key, stored as AUR_SSH_PRIVATE_KEY. This
+    # job cannot create the AUR account or its first-push permissions.
+    if: ${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute release tarball sha256 and bump PKGBUILD
+        run: |
+          VERSION="${{ needs.build-artifacts.outputs.version }}"
+          URL="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/v${VERSION}.tar.gz"
+          SHA256=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
+          sed -i \
+            -e "s#pkgver=.*#pkgver=${VERSION}#" \
+            -e "s#sha256sums=('.*')#sha256sums=('${SHA256}')#" \
+            packaging/aur/PKGBUILD
+      - name: Push to AUR
+        env:
+          SSH_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -H aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+          git clone "ssh://aur@aur.archlinux.org/chwrite.git" aur-repo || \
+            (git init aur-repo && git -C aur-repo remote add origin "ssh://aur@aur.archlinux.org/chwrite.git")
+          cp packaging/aur/PKGBUILD aur-repo/PKGBUILD
+          cd aur-repo
+          git config user.name "chwrite-release-bot"
+          git config user.email "noreply@example.invalid"
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o UserKnownHostsFile=~/.ssh/known_hosts" git add PKGBUILD
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o UserKnownHostsFile=~/.ssh/known_hosts" git commit -m "chwrite ${{ needs.build-artifacts.outputs.version }}" --allow-empty
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o UserKnownHostsFile=~/.ssh/known_hosts" git push origin HEAD:master
+
+  # winget deliberately has no automated job here. Per packaging/README.md's
+  # "winget" section, the FIRST submission for a brand-new PackageIdentifier
+  # has to clear winget-pkgs' validation bot and human review manually -
+  # automating `wingetcreate update` for version bumps on SUBSEQUENT releases
+  # is a reasonable follow-up once that first PR has actually landed, not
+  # before.

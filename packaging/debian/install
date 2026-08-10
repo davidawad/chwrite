@@ -1,0 +1,15 @@
+# dh_install file-placement map: "<source path relative to repo root>  <destination directory relative to the package root>"
+#
+# Both chwrite.py (the generated single-file distributable, SPEC.md
+# section 26.1) and chwrite (the existing POSIX launcher shim, unchanged,
+# SPEC.md section 19) are installed together into /usr/bin. This
+# deliberately mirrors the AUR package's layout (packaging/aur/PKGBUILD)
+# rather than splitting the implementation into /usr/lib/chwrite/ with a
+# separate thin /usr/bin/chwrite wrapper: the shim's own path-resolution
+# logic (see ./chwrite) looks for chwrite.py either in
+# ~/.config/chwrite/ or right next to itself, so installing both files
+# into the same directory is what makes the unmodified, existing shim
+# work correctly with zero new wrapper code. See packaging/README.md for
+# the full rationale.
+chwrite.py usr/bin/
+chwrite usr/bin/

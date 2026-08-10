@@ -1,0 +1,22 @@
+Source: chwrite
+Section: vcs
+Priority: optional
+Maintainer: David Awad <angrybohr@protonmail.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>
+Rules-Requires-Root: no
+
+Package: chwrite
+Architecture: all
+Depends: ${misc:Depends}, python3
+Description: protect files in a Git repository from unwanted modification
+ chwrite is a dependency-free command-line tool that lets a Git repository
+ declare files or directories that should not be modified by coding agents,
+ scripts, editors, or other processes.
+ .
+ It applies the strongest file-protection mechanism available on the local
+ operating system (chflags uchg on macOS, chattr/chmod on Linux, ACLs on
+ Windows) and can verify protected files before Git operations such as
+ commit or push. The core implementation is a single dependency-free
+ Python 3 file; this package installs it plus a small POSIX shell launcher.

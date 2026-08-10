@@ -1,0 +1,6 @@
+chwrite (1.0.0-1) unstable; urgency=medium
+
+  * Initial Debian packaging, tracking upstream chwrite v1.0.0
+    (SPEC.md section 31.5).
+
+ -- David Awad <angrybohr@protonmail.com>  Mon, 10 Aug 2026 22:54:15 +0000

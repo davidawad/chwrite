@@ -1,0 +1,62 @@
+# Maintainer: David Awad <angrybohr@protonmail.com>
+#
+# chwrite AUR package.
+#
+# STATUS: wired but pending real release infrastructure. This PKGBUILD is
+# correct in structure but two things below are placeholders until this
+# repository has an actual GitHub remote and a real tagged release asset
+# (see SPEC.md section 31, "Honesty rule"):
+#
+#   1. url= / source= use <GITHUB_OWNER>/<GITHUB_REPO> as a literal
+#      placeholder. Replace both with the real owner/repo once the project
+#      is pushed to GitHub (e.g. davidawad/chwrite).
+#   2. sha256sums=() below is a placeholder string, not a real digest,
+#      because no release tarball exists yet to hash. Once
+#      https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>/archive/refs/tags/v${pkgver}.tar.gz
+#      exists, regenerate it with EITHER of:
+#
+#        curl -sL "https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>/archive/refs/tags/v${pkgver}.tar.gz" | sha256sum
+#
+#      OR, from inside this packaging/aur/ directory, let makepkg compute
+#      and rewrite it for you:
+#
+#        makepkg -g >> PKGBUILD   # then delete the old sha256sums=() line
+#
+# This file has NOT been run through a real `makepkg`/`namcap` (no Arch
+# Linux environment was available in the sandbox this was authored in —
+# see packaging/README.md for exactly what was/wasn't verified).
+
+pkgname=chwrite
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Protect files in a Git repository from unwanted modification"
+arch=('any')
+url="https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>"
+license=('MIT')
+depends=('python')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('REPLACE_WITH_REAL_SHA256_ONCE_RELEASE_TARBALL_EXISTS')
+
+# GitHub codeload tarballs for tag "vX.Y.Z" extract to "<repo>-X.Y.Z"
+# (the leading "v" is stripped from the directory name, not the tag).
+# This assumes <GITHUB_REPO> == "chwrite"; update if the real repo is
+# named differently.
+_srcdir="chwrite-$pkgver"
+
+check() {
+  cd "$srcdir/$_srcdir"
+  # Smoke-test only: the real test suite (pytest, section 27) is a dev-only
+  # dependency chain (uv/ruff/pyright/pytest) this package intentionally
+  # does not pull in at runtime (SPEC.md section 26.2). --help is enough to
+  # confirm the interpreter can parse and execute the bundled artifact.
+  python chwrite.py --help >/dev/null
+}
+
+package() {
+  cd "$srcdir/$_srcdir"
+
+  install -Dm755 chwrite.py "$pkgdir/usr/bin/chwrite.py"
+  install -Dm755 chwrite "$pkgdir/usr/bin/chwrite"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

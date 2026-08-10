@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+# Installer manifest — winget-pkgs manifest schema.
+#
+# InstallerType/NestedInstallerType choice: see packaging/README.md
+# ("winget (Windows)" section) for the full reasoning. Summary: chwrite
+# ships as chwrite.py + chwrite.cmd, not a real EXE/MSI installer, so this
+# uses InstallerType `zip` with NestedInstallerType `portable` — winget
+# unpacks the zip, and PortableCommandAlias below tells winget to create a
+# `chwrite` command on PATH pointing at chwrite.cmd. chwrite.cmd already
+# resolves chwrite.py as a sibling file in its own directory (see
+# chwrite.cmd's %~dp0 resolution), which holds true inside winget's
+# portable install directory since both files are unpacked together.
+#
+# PLACEHOLDERS: this repo has no GitHub remote / real tagged release yet
+# (SPEC.md section 31, "honesty rule"). InstallerUrl and InstallerSha256
+# below MUST be filled in from a real GitHub Release asset before this
+# manifest is submitted. Do not submit with these placeholder values.
+
+PackageIdentifier: ChwriteProject.Chwrite
+PackageVersion: 1.0.0
+Platform:
+  - Windows.Desktop
+MinimumOSVersion: 10.0.0.0
+InstallModes:
+  - interactive
+  - silent
+UpgradeBehavior: install
+Installers:
+  - Architecture: neutral
+    InstallerType: zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: chwrite.cmd
+        PortableCommandAlias: chwrite
+    InstallerUrl: "<PLACEHOLDER: https://github.com/<OWNER>/chwrite/releases/download/v1.0.0/chwrite-1.0.0-windows.zip>"
+    InstallerSha256: "<PLACEHOLDER-64-CHAR-SHA256-OF-THE-RELEASE-ZIP>"
+ManifestType: installer
+ManifestVersion: 1.6.0

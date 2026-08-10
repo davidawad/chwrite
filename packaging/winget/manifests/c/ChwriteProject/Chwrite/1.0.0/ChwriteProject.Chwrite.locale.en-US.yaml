@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+
+# Default locale manifest — winget-pkgs manifest schema.
+#
+# PLACEHOLDERS: PublisherUrl / PublisherSupportUrl / PackageUrl / LicenseUrl
+# below assume a GitHub repo at <OWNER>/chwrite that does not exist yet
+# (this repo currently has no GitHub remote — see packaging/README.md).
+# Fill in the real URLs once the repo is published, before submitting.
+
+PackageIdentifier: ChwriteProject.Chwrite
+PackageVersion: 1.0.0
+PackageLocale: en-US
+Publisher: David Awad
+PublisherUrl: "<PLACEHOLDER: https://github.com/<OWNER>>"
+PublisherSupportUrl: "<PLACEHOLDER: https://github.com/<OWNER>/chwrite/issues>"
+Author: David Awad
+PackageName: chwrite
+PackageUrl: "<PLACEHOLDER: https://github.com/<OWNER>/chwrite>"
+License: MIT
+LicenseUrl: "<PLACEHOLDER: https://github.com/<OWNER>/chwrite/blob/main/LICENSE>"
+Copyright: Copyright (c) 2026 David Awad
+ShortDescription: Protect files in a Git repository from unwanted modification.
+Description: >-
+  chwrite is a dependency-free command-line tool that lets a Git repository
+  declare files or directories (lockfiles, migrations, generated code, CI
+  workflow files) that must not be modified, then enforces that using the
+  strongest file-protection mechanism available on the local OS: Windows
+  ACLs via icacls on Windows, chflags on macOS, chattr/chmod on Linux. The
+  main use case is stopping coding agents, scripts, and editors from
+  touching files they have no reason to touch.
+
+  Requires a Python 3.11+ interpreter ("python" or "py") already on PATH;
+  the bundled chwrite.cmd launcher locates and runs the bundled chwrite.py
+  against it and exits with a clear error if no interpreter is found.
+Tags:
+  - git
+  - cli
+  - security
+  - file-protection
+  - developer-tools
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
