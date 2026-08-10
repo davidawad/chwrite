@@ -1,0 +1,39 @@
+#!/bin/sh
+# chwrite - POSIX shell shim
+#
+# Locates the real chwrite.py implementation and execs python3 on it,
+# passing through all arguments and propagating the exit code.
+#
+# Resolution order:
+#   1. ~/.config/chwrite/chwrite.py  (installed via `chwrite.py install`)
+#   2. chwrite.py next to this script (running from a repo checkout)
+set -eu
+
+INSTALLED="${HOME:-}/.config/chwrite/chwrite.py"
+
+# Resolve the directory this script lives in, following symlinks.
+SELF="$0"
+while [ -L "$SELF" ]; do
+    LINK="$(readlink "$SELF")"
+    case "$LINK" in
+        /*) SELF="$LINK" ;;
+        *) SELF="$(dirname "$SELF")/$LINK" ;;
+    esac
+done
+SELF_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+LOCAL="$SELF_DIR/chwrite.py"
+
+if [ -f "$INSTALLED" ]; then
+    TARGET="$INSTALLED"
+elif [ -f "$LOCAL" ]; then
+    TARGET="$LOCAL"
+else
+    echo "chwrite: could not find chwrite.py (looked in $INSTALLED and $LOCAL)" >&2
+    echo "chwrite: run 'python3 chwrite.py install' first" >&2
+    exit 2
+fi
+
+PYTHON="python3"
+command -v python3 >/dev/null 2>&1 || PYTHON="python"
+
+exec "$PYTHON" "$TARGET" "$@"

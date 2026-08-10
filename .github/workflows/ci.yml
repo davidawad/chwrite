@@ -1,0 +1,73 @@
+name: CI
+
+"on":
+  push:
+  pull_request:
+
+jobs:
+  lint-and-unit:
+    name: lint-and-unit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: ruff format --check
+        run: uv run ruff format --check .
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: pyright --strict
+        run: uv run pyright
+
+      - name: pytest (coverage floor 85%, SPEC.md section 27)
+        run: uv run pytest tests/ --cov=src/chwrite --cov-fail-under=85 -q
+
+      - name: chwrite.py bundle is not stale (SPEC.md section 26.1)
+        run: |
+          python3 scripts/bundle.py
+          git diff --quiet -- chwrite.py || {
+            echo "chwrite.py is out of date relative to src/chwrite/; run 'just build' and commit it" >&2
+            git diff -- chwrite.py
+            exit 1
+          }
+
+  acceptance:
+    name: acceptance (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # SPEC.md section 30: the acceptance job intentionally does not set
+      # up uv/dev deps - scripts/acceptance_test.py is stdlib-only and
+      # exercises the committed, generated chwrite.py directly, exactly as
+      # an end user would run it after cloning.
+      - name: Run acceptance test (POSIX)
+        if: runner.os != 'Windows'
+        run: python3 scripts/acceptance_test.py
+
+      - name: Run acceptance test (Windows)
+        if: runner.os == 'Windows'
+        run: python scripts/acceptance_test.py
