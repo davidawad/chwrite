@@ -7,15 +7,15 @@
 # repository has an actual GitHub remote and a real tagged release asset
 # (see SPEC.md section 31, "Honesty rule"):
 #
-#   1. url= / source= use <GITHUB_OWNER>/<GITHUB_REPO> as a literal
+#   1. url= / source= use davidawad/chwrite as a literal
 #      placeholder. Replace both with the real owner/repo once the project
 #      is pushed to GitHub (e.g. davidawad/chwrite).
 #   2. sha256sums=() below is a placeholder string, not a real digest,
 #      because no release tarball exists yet to hash. Once
-#      https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>/archive/refs/tags/v${pkgver}.tar.gz
+#      https://github.com/davidawad/chwrite/archive/refs/tags/v${pkgver}.tar.gz
 #      exists, regenerate it with EITHER of:
 #
-#        curl -sL "https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>/archive/refs/tags/v${pkgver}.tar.gz" | sha256sum
+#        curl -sL "https://github.com/davidawad/chwrite/archive/refs/tags/v${pkgver}.tar.gz" | sha256sum
 #
 #      OR, from inside this packaging/aur/ directory, let makepkg compute
 #      and rewrite it for you:
@@ -31,11 +31,11 @@ pkgver=1.0.0
 pkgrel=1
 pkgdesc="Protect files in a Git repository from unwanted modification"
 arch=('any')
-url="https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>"
+url="https://github.com/davidawad/chwrite"
 license=('MIT')
 depends=('python')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('REPLACE_WITH_REAL_SHA256_ONCE_RELEASE_TARBALL_EXISTS')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/davidawad/chwrite/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('172e4107d9e877df14a3fa1b25839db7344506740a906cb07f6f17f8291f4109')
 
 # GitHub codeload tarballs for tag "vX.Y.Z" extract to "<repo>-X.Y.Z"
 # (the leading "v" is stripped from the directory name, not the tag).

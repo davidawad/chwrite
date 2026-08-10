@@ -82,7 +82,7 @@ release. This is NOT "installable via `brew install`" yet.**
 `packaging/homebrew/chwrite.rb` - a Homebrew formula that:
 
 - Downloads the tagged GitHub release source tarball
-  (`https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>/archive/refs/tags/vX.Y.Z.tar.gz`).
+  (`https://github.com/davidawad/chwrite/archive/refs/tags/vX.Y.Z.tar.gz`).
 - Verifies its `sha256`.
 - Depends on `python@3.12` (chwrite.py is stdlib-only per SPEC.md section 1/19;
   3.11+ is required only for optional `tomllib`-based TOML policy support,
@@ -100,7 +100,7 @@ release. This is NOT "installable via `brew install`" yet.**
 
 `packaging/homebrew/chwrite.rb` currently has:
 
-1. `<GITHUB_OWNER>/<GITHUB_REPO>` in `homepage`/`url` - this repo has no
+1. `davidawad/chwrite` in `homepage`/`url` - this repo has no
    GitHub remote yet (`git remote -v` shows a local filesystem path). Replace
    once one exists.
 2. `PLACEHOLDER_SHA256` in `sha256` - a real value can only be computed
@@ -108,7 +108,7 @@ release. This is NOT "installable via `brew install`" yet.**
 
    ```bash
    curl -L -o chwrite-X.Y.Z.tar.gz \
-     https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>/archive/refs/tags/vX.Y.Z.tar.gz
+     https://github.com/davidawad/chwrite/archive/refs/tags/vX.Y.Z.tar.gz
    shasum -a 256 chwrite-X.Y.Z.tar.gz
    ```
 
@@ -311,7 +311,7 @@ yet.**
 `packaging/aur/PKGBUILD` — an AUR package build script that:
 
 - Downloads the tagged GitHub release source tarball
-  (`https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>/archive/refs/tags/vX.Y.Z.tar.gz`).
+  (`https://github.com/davidawad/chwrite/archive/refs/tags/vX.Y.Z.tar.gz`).
 - Verifies its `sha256sums`.
 - Depends on `python` (Arch's package name for CPython 3; chwrite.py is
   stdlib-only per SPEC.md section 1/19).
@@ -337,13 +337,13 @@ Docker Hub is the standard choice), never by hand.
 
 Same shape as the Homebrew formula's placeholders:
 
-1. `<GITHUB_OWNER>/<GITHUB_REPO>` in `url=`/`source=` — this repo has no
+1. `davidawad/chwrite` in `url=`/`source=` — this repo has no
    GitHub remote yet. Replace once one exists.
 2. `sha256sums=('REPLACE_WITH_REAL_SHA256_ONCE_RELEASE_TARBALL_EXISTS')` —
    only computable against a real, published release tarball:
 
    ```bash
-   curl -sL "https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>/archive/refs/tags/v1.0.0.tar.gz" | sha256sum
+   curl -sL "https://github.com/davidawad/chwrite/archive/refs/tags/v1.0.0.tar.gz" | sha256sum
    ```
 
    or, from an Arch machine with the file downloaded per `source=`, let
@@ -512,7 +512,7 @@ integrating this work — a one-line fix, called out here so it isn't missed.
 
 ### Two placeholders, same shape as every other surface
 
-1. `<GITHUB_OWNER>/<GITHUB_REPO>` in `control`'s `Homepage:` and
+1. `davidawad/chwrite` in `control`'s `Homepage:` and
    `copyright`'s `Source:`.
 2. Nothing else — unlike Homebrew/AUR, this `.deb` is not built by
    downloading a release tarball at build time; `dpkg-buildpackage` builds

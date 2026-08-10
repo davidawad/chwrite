@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: David Awad <angrybohr@protonmail.com>
 Build-Depends: debhelper-compat (= 13)
 Standards-Version: 4.6.2
-Homepage: https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>
+Homepage: https://github.com/davidawad/chwrite
 Rules-Requires-Root: no
 
 Package: chwrite

@@ -33,7 +33,7 @@ Installers:
     NestedInstallerFiles:
       - RelativeFilePath: chwrite.cmd
         PortableCommandAlias: chwrite
-    InstallerUrl: "<PLACEHOLDER: https://github.com/<OWNER>/chwrite/releases/download/v1.0.0/chwrite-1.0.0-windows.zip>"
+    InstallerUrl: "<PLACEHOLDER: https://github.com/davidawad/chwrite/releases/download/v1.0.0/chwrite-1.0.0-windows.zip>"
     InstallerSha256: "<PLACEHOLDER-64-CHAR-SHA256-OF-THE-RELEASE-ZIP>"
 ManifestType: installer
 ManifestVersion: 1.6.0

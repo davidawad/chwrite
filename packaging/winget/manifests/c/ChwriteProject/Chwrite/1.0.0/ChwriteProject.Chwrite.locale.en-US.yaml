@@ -2,22 +2,21 @@
 
 # Default locale manifest — winget-pkgs manifest schema.
 #
-# PLACEHOLDERS: PublisherUrl / PublisherSupportUrl / PackageUrl / LicenseUrl
-# below assume a GitHub repo at <OWNER>/chwrite that does not exist yet
-# (this repo currently has no GitHub remote — see packaging/README.md).
-# Fill in the real URLs once the repo is published, before submitting.
+# Publisher/package URLs below point at the real repo (davidawad/chwrite).
+# InstallerUrl/InstallerSha256 in the installer manifest are still
+# placeholders — see that file's header comment.
 
 PackageIdentifier: ChwriteProject.Chwrite
 PackageVersion: 1.0.0
 PackageLocale: en-US
 Publisher: David Awad
-PublisherUrl: "<PLACEHOLDER: https://github.com/<OWNER>>"
-PublisherSupportUrl: "<PLACEHOLDER: https://github.com/<OWNER>/chwrite/issues>"
+PublisherUrl: "https://github.com/davidawad"
+PublisherSupportUrl: "https://github.com/davidawad/chwrite/issues"
 Author: David Awad
 PackageName: chwrite
-PackageUrl: "<PLACEHOLDER: https://github.com/<OWNER>/chwrite>"
+PackageUrl: "https://github.com/davidawad/chwrite"
 License: MIT
-LicenseUrl: "<PLACEHOLDER: https://github.com/<OWNER>/chwrite/blob/main/LICENSE>"
+LicenseUrl: "https://github.com/davidawad/chwrite/blob/main/LICENSE"
 Copyright: Copyright (c) 2026 David Awad
 ShortDescription: Protect files in a Git repository from unwanted modification.
 Description: >-

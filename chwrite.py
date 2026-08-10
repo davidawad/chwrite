@@ -6,7 +6,7 @@ changing anything under src/chwrite/. This is the single-file,
 stdlib-only distributable artifact described in SPEC.md section 19;
 section 26 explains why the maintained source is a package instead.
 
-Generated from src/chwrite/ at commit 249da8c.
+Generated from src/chwrite/ (chwrite 1.0.0).
 """
 
 from __future__ import annotations

@@ -94,7 +94,7 @@ jobs:
       - name: Checksums
         run: |
           cd dist
-          sha256sum * > checksums.txt
+          sha256sum -- * > checksums.txt
           cat checksums.txt
 
       - name: Upload build artifacts (shared with publish jobs below)
@@ -133,17 +133,18 @@ jobs:
           name: dist
           path: dist
       - name: Remove non-PyPI artifacts before upload
-        run: find dist -name "*.deb" -o -name "*.tgz" -o -name "checksums.txt" -delete
+        run: find dist \( -name "*.deb" -o -name "*.tgz" -o -name "checksums.txt" \) -delete
       - uses: pypa/gh-action-pypi-publish@release/v1
 
   publish-npm:
     name: publish-npm
     needs: build-artifacts
     runs-on: ubuntu-latest
-    # NPM_TOKEN is a repo secret only a human with npm publish rights on the
-    # `chwrite` package name can create (npm login, then an automation
-    # token). Missing secret = skip, not fail. See packaging/README.md.
-    if: ${{ secrets.NPM_TOKEN != '' }}
+    # `secrets` is not a valid context in a job-level `if:` (GitHub rejects
+    # the whole workflow file if it is - it's not just this job that fails).
+    # Gate on a repo VARIABLE a human flips once NPM_TOKEN is actually
+    # configured, same pattern as publish-pypi above. See packaging/README.md.
+    if: vars.NPM_PUBLISH_READY == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -165,7 +166,9 @@ jobs:
     # Requires the one-time-created `homebrew-chwrite` tap repo (SPEC.md
     # section 31.3) and a fine-grained PAT scoped to it, stored as
     # HOMEBREW_TAP_TOKEN. This job cannot create the tap repo itself.
-    if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+    # `secrets` isn't valid in a job-level `if:` (see publish-npm above) -
+    # gate on a repo variable a human flips once the token exists.
+    if: vars.HOMEBREW_TAP_READY == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Compute release tarball sha256 and bump formula
@@ -192,7 +195,9 @@ jobs:
     runs-on: ubuntu-latest
     # Requires an AUR account's SSH key, stored as AUR_SSH_PRIVATE_KEY. This
     # job cannot create the AUR account or its first-push permissions.
-    if: ${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}
+    # `secrets` isn't valid in a job-level `if:` (see publish-npm above) -
+    # gate on a repo variable a human flips once the key exists.
+    if: vars.AUR_PUBLISH_READY == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Compute release tarball sha256 and bump PKGBUILD

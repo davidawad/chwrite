@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import ast
 import pathlib
-import subprocess
 import sys
+import tomllib
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = REPO_ROOT / "src" / "chwrite"
@@ -100,14 +100,14 @@ def _read_module(rel_path: str) -> tuple[str, list[str]]:
     return body.strip("\n"), hoisted
 
 
-def _current_commit() -> str:
-    try:
-        proc = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT, capture_output=True, check=False
-        )
-    except FileNotFoundError:
-        return "unknown"
-    return proc.stdout.decode().strip() if proc.returncode == 0 else "unknown (no commits yet)"
+def _project_version() -> str:
+    # Deliberately NOT the git commit hash: embedding "generated at commit
+    # X" is unstable by construction (this file's own bytes are part of
+    # commit X, so the hash can never match itself once committed - this
+    # caused a real CI staleness false-positive, see SPEC.md section 26.1).
+    # pyproject.toml's version has no such self-reference problem.
+    with (REPO_ROOT / "pyproject.toml").open("rb") as f:
+        return tomllib.load(f)["project"]["version"]
 
 
 def build() -> str:
@@ -130,7 +130,7 @@ def build() -> str:
         "changing anything under src/chwrite/. This is the single-file,\n"
         "stdlib-only distributable artifact described in SPEC.md section 19;\n"
         "section 26 explains why the maintained source is a package instead.\n\n"
-        f"Generated from src/chwrite/ at commit {_current_commit()}.\n"
+        f"Generated from src/chwrite/ (chwrite {_project_version()}).\n"
         '"""\n\n'
         f"{FUTURE_IMPORT}\n\n"
     )

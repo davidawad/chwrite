@@ -6,11 +6,11 @@
 # and why). Two placeholders below MUST be filled in once this repo has
 # an actual GitHub remote and a published v1.0.0 release tarball:
 #
-#   1. <GITHUB_OWNER>/<GITHUB_REPO> in the `homepage`/`url` below.
+#   1. davidawad/chwrite in the `homepage`/`url` below.
 #   2. PLACEHOLDER_SHA256 in the `sha256` below - compute it with:
 #
 #        curl -L -o chwrite-1.0.0.tar.gz \
-#          https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>/archive/refs/tags/v1.0.0.tar.gz
+#          https://github.com/davidawad/chwrite/archive/refs/tags/v1.0.0.tar.gz
 #        shasum -a 256 chwrite-1.0.0.tar.gz
 #
 #      and paste the resulting 64-character hex digest in place of
@@ -19,9 +19,9 @@
 #      wired up against a real tap repo).
 class Chwrite < Formula
   desc "Protect declared files in a Git repo from unwanted modification"
-  homepage "https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>"
-  url "https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "PLACEHOLDER_SHA256"
+  homepage "https://github.com/davidawad/chwrite"
+  url "https://github.com/davidawad/chwrite/archive/refs/tags/v1.0.0.tar.gz"
+  sha256 "172e4107d9e877df14a3fa1b25839db7344506740a906cb07f6f17f8291f4109"
   license "MIT"
 
   # chwrite.py is pure stdlib (SPEC.md section 1/19) and requires Python

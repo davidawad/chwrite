@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: chwrite
 Upstream-Contact: David Awad <angrybohr@protonmail.com>
-Source: https://github.com/<GITHUB_OWNER>/<GITHUB_REPO>
+Source: https://github.com/davidawad/chwrite
 
 Files: *
 Copyright: 2026 David Awad
