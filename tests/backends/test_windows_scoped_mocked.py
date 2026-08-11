@@ -29,7 +29,7 @@ def test_protect_windows_scoped_deny_user_calls_icacls_deny(mock_run, _icacls, t
     result = protect_windows_scoped(str(target), ["ci-bot"], [])
 
     mock_run.assert_called_once_with(
-        ["icacls", str(target), "/deny", "ci-bot:(W)"], capture_output=True, check=False
+        ["icacls", str(target), "/deny", "ci-bot:(WD,AD,WEA,WA)"], capture_output=True, check=False
     )
     assert result == {
         "backend": "windows-acl-deny",
@@ -49,7 +49,9 @@ def test_protect_windows_scoped_deny_group_calls_icacls_deny(mock_run, _icacls, 
     result = protect_windows_scoped(str(target), [], ["contractors"])
 
     mock_run.assert_called_once_with(
-        ["icacls", str(target), "/deny", "contractors:(W)"], capture_output=True, check=False
+        ["icacls", str(target), "/deny", "contractors:(WD,AD,WEA,WA)"],
+        capture_output=True,
+        check=False,
     )
     assert result["acl_entries"] == ["contractors"]
 

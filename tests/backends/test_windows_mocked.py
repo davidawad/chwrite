@@ -29,7 +29,7 @@ def test_protect_windows_calls_icacls_deny(mock_run, _icacls, _user, tmp_path) -
     result = protect_windows(str(target), hard=False)
 
     mock_run.assert_called_once_with(
-        ["icacls", str(target), "/deny", "dave:(W)"], capture_output=True, check=False
+        ["icacls", str(target), "/deny", "dave:(WD,AD,WEA,WA)"], capture_output=True, check=False
     )
     assert result == {
         "backend": "windows-acl",

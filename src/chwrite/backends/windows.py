@@ -41,8 +41,22 @@ def protect_windows(full_path: str, hard: bool) -> ProtectResult:
         # added in the meantime. Removing only our own explicit deny
         # entry is safer and simpler, at the cost of not being a
         # byte-for-byte ACL restore.
+        #
+        # Granular rights (WD,AD,WEA,WA), NOT the simple "(W)" alias:
+        # confirmed on real Windows CI that `/deny user:(W)` denies READS
+        # too, not just writes - icacls's simple "W" write alias silently
+        # includes DELETE, and denying DELETE alone (independent of any
+        # read-related bit) blocks ordinary file reads on Windows for
+        # reasons that don't reduce to documented NTFS generic-rights
+        # mappings. (WD,AD,WEA,WA) - write data/append data/write
+        # extended attributes/write attributes - was verified bit-by-bit
+        # to block write+append while leaving reads unaffected. Omitting
+        # DELETE here doesn't weaken the documented guarantee: section 12
+        # already says Windows can't reliably block delete/rename via a
+        # file-level ACE alone, since the parent directory's
+        # FILE_DELETE_CHILD right can permit it regardless.
         proc = subprocess.run(
-            [icacls, full_path, "/deny", f"{user}:(W)"], capture_output=True, check=False
+            [icacls, full_path, "/deny", f"{user}:(WD,AD,WEA,WA)"], capture_output=True, check=False
         )
         if proc.returncode == 0:
             return {
@@ -121,8 +135,11 @@ def protect_windows_scoped(
         )
     applied: list[str] = []
     for name in [*deny_user, *deny_group]:
+        # (WD,AD,WEA,WA), not the simple "(W)" alias - see protect_windows()
+        # above for why: "(W)" silently includes DELETE, and denying
+        # DELETE alone blocks ordinary file reads on Windows.
         proc = subprocess.run(
-            [icacls, full_path, "/deny", f"{name}:(W)"], capture_output=True, check=False
+            [icacls, full_path, "/deny", f"{name}:(WD,AD,WEA,WA)"], capture_output=True, check=False
         )
         if proc.returncode != 0:
             stderr = proc.stderr.decode(errors="replace").strip()

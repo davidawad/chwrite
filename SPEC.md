@@ -480,6 +480,8 @@ First, an object owner can modify its DACL.
 
 Second, Windows permits deletion/renaming when either the file grants DELETE or its parent directory grants `FILE_DELETE_CHILD`. Therefore protecting an individual file without restricting its parent cannot universally prevent replacement/deletion.
 
+Third — confirmed on real `windows-latest` GitHub Actions CI, not just reasoned about: `icacls file /deny user:(W)` denies *reads*, not just writes. icacls's simple "W" permission alias silently bundles in DELETE, and (verified bit-by-bit against a real Windows runner) denying DELETE alone — independent of any read-related right — is sufficient to make an ordinary read-open fail with access denied. chwrite therefore denies the granular rights `(WD,AD,WEA,WA)` (write data / append data / write extended attributes / write attributes) instead of the simple `(W)` alias, omitting DELETE entirely. This doesn't weaken the second limitation above — file-level DELETE denial was already documented as unreliable given the parent-directory caveat — it just avoids a real, previously-undiscovered bug where the "safe" simple alias broke reads outright.
+
 The normal Windows backend is therefore classified:
 
 ```text
