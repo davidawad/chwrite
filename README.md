@@ -42,10 +42,10 @@ After install, the `chwrite` / `chwrite.cmd` launchers in this repo (and
 
 ```bash
 # In a repo you want to protect files in:
-chwrite init                              # creates .chwrite
+chwrite init                              # creates .write_protect
 chwrite add package-lock.json
 chwrite add ':(glob)migrations/**'
-git add .chwrite
+git add .write_protect
 git commit -m "Protect generated files"
 
 chwrite apply                             # lock the declared files now
@@ -55,10 +55,10 @@ chwrite status                            # see current protection state
 Anyone who clones the repo and has chwrite installed globally gets
 protection automatically: Git runs the global `post-checkout` hook after
 clone, which runs `chwrite apply --quiet`. Anyone without chwrite installed
-can still clone and use the repo normally — `.chwrite` is inert data, never
+can still clone and use the repo normally — `.write_protect` is inert data, never
 executed.
 
-## `.chwrite` policy file
+## `.write_protect` policy file
 
 ```text
 version 1
@@ -74,7 +74,7 @@ Patterns are Git pathspecs (`git ls-files -z -- <pathspec>`), not a custom
 glob language. Rules only ever apply to files inside the repo root; absolute
 paths and paths that resolve outside the repo are rejected.
 
-`.chwrite.json`, `.chwrite.toml`, and `.chwrite.yaml`/`.chwrite.yml` are
+`.write_protect.json`, `.write_protect.toml`, and `.write_protect.yaml`/`.write_protect.yml` are
 equivalent structured formats for the same schema (`pattern`/`message`
 fields instead of `protect ... message="..."` lines) — pick one style per
 repo. Exactly one policy file may exist at the repo root; chwrite errors if
@@ -97,7 +97,7 @@ chwrite lock path/to/file.ts --message "mid-refactor, don't touch"
 ```
 
 This is personal and uncommitted — recorded only in local
-`.git/chwrite/state.json`, never written to `.chwrite*`. `chwrite unlock
+`.git/chwrite/state.json`, never written to `.write_protect*`. `chwrite unlock
 path/to/file.ts` removes it. Full behavior, precedence rules, and the
 structured-format schema: [`SPEC.md`](./SPEC.md) sections 24-25.
 
@@ -157,11 +157,11 @@ claim uniform protection across platforms. From strongest to weakest:
 ## Command reference
 
 ```text
-chwrite init                  create .chwrite in the current repo
+chwrite init                  create .write_protect in the current repo
 chwrite add <pathspec>        add a protect rule
 chwrite remove <pathspec>     remove a protect rule
 
-chwrite apply                 (re)apply protection per .chwrite (idempotent)
+chwrite apply                 (re)apply protection per .write_protect (idempotent)
 chwrite lock                  apply the default (unprivileged) protection level
 chwrite lock --hard           apply HARD protection (may require sudo; chwrite
                                prints the exact command, it never runs it)
@@ -236,7 +236,7 @@ re-inspects real OS state rather than trusting that file.
   not prevention.
 * Anything if chwrite itself isn't installed on the machine doing the
   modifying — a protected repo cloned somewhere without chwrite installed
-  gets zero enforcement (`.chwrite` is just inert data to Git and any tool
+  gets zero enforcement (`.write_protect` is just inert data to Git and any tool
   that doesn't understand it).
 * The `chwrite-setup install --claude-hook` PreToolUse hook is not itself a
   security boundary — it's a legible pre-write explanation layered on top.

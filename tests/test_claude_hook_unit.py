@@ -39,7 +39,7 @@ def _init_repo(tmp_path: Path) -> str:
 
 def _repo_with_policy(tmp_path: Path) -> str:
     root = _init_repo(tmp_path)
-    (Path(root) / ".chwrite").write_text(
+    (Path(root) / ".write_protect").write_text(
         'version 1\n\nprotect protected.txt message="policy message"\n'
     )
     (Path(root) / "protected.txt").write_text("x")
@@ -312,7 +312,7 @@ def _repo_with_regex_policy(tmp_path: Path) -> str:
     (Path(root) / "migrations").mkdir()
     (Path(root) / "migrations" / "001.sql").write_text("x")
     (Path(root) / "migrations" / "readme.md").write_text("x")
-    (Path(root) / ".chwrite").write_text(
+    (Path(root) / ".write_protect").write_text(
         'version 1\n\nprotect-regex ^migrations/.*\\.sql$ message="append-only"\n'
     )
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
@@ -333,7 +333,7 @@ def test_protection_message_regex_rule_does_not_match_other_files(tmp_path: Path
 def test_protection_message_last_matching_policy_rule_wins(tmp_path: Path) -> None:
     root = _init_repo(tmp_path)
     (Path(root) / "a.txt").write_text("x")
-    (Path(root) / ".chwrite").write_text(
+    (Path(root) / ".write_protect").write_text(
         'version 1\n\nprotect a.txt message="first"\nprotect a.txt message="second"\n'
     )
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)

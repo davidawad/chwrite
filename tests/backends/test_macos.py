@@ -59,7 +59,7 @@ def test_acceptance_apply_verify_unlock_apply(tmp_path) -> None:
 
 def test_apply_ten_times_is_idempotent(tmp_path) -> None:
     _init_repo(tmp_path)
-    (tmp_path / ".chwrite").write_text("version 1\n\nprotect protected.txt\n")
+    (tmp_path / ".write_protect").write_text("version 1\n\nprotect protected.txt\n")
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "policy"], cwd=tmp_path, check=True)
 

@@ -322,7 +322,7 @@ def _parse_protect_sequence(
 
 
 def parse_yaml_policy(text: str, filename: str) -> tuple[int, list[dict[str, str | None]]]:
-    """Parse a .chwrite.yaml/.yml document into (version, raw protect items).
+    """Parse a .write_protect.yaml/.yml document into (version, raw protect items).
 
     Each item in the returned list is a dict with only the keys actually
     present on that sequence entry, drawn from _PROTECT_ITEM_KEYS. Callers
@@ -382,7 +382,22 @@ def parse_yaml_policy(text: str, filename: str) -> tuple[int, list[dict[str, str
 
 # --- policy.py ---------------------------------------------------
 
-POLICY_FILENAMES = [".chwrite", ".chwrite.json", ".chwrite.toml", ".chwrite.yaml", ".chwrite.yml"]
+# Single source of truth for the repo policy file's basename (SPEC.md
+# section 5) - every filename variant below derives from this, so
+# renaming it is a one-line change, not a repo-wide find/replace.
+POLICY_BASENAME = "write_protect"
+POLICY_FILENAME_PLAIN = f".{POLICY_BASENAME}"
+POLICY_FILENAME_JSON = f".{POLICY_BASENAME}.json"
+POLICY_FILENAME_TOML = f".{POLICY_BASENAME}.toml"
+POLICY_FILENAME_YAML = f".{POLICY_BASENAME}.yaml"
+POLICY_FILENAME_YML = f".{POLICY_BASENAME}.yml"
+POLICY_FILENAMES = [
+    POLICY_FILENAME_PLAIN,
+    POLICY_FILENAME_JSON,
+    POLICY_FILENAME_TOML,
+    POLICY_FILENAME_YAML,
+    POLICY_FILENAME_YML,
+]
 ADHOC_DEFAULT_MESSAGE = "protected by chwrite (ad hoc local lock)"
 
 
@@ -620,7 +635,7 @@ def _parse_toml(path: str, filename: str) -> tuple[int, list[Rule]]:
     if sys.version_info < (3, 11):  # noqa: UP036
         raise ChwriteError(
             f"{filename}: TOML policy files require Python 3.11+ (tomllib is not available on this "
-            "interpreter); use .chwrite, .chwrite.json, or .chwrite.yaml instead",
+            "interpreter); use .write_protect, .write_protect.json, or .write_protect.yaml instead",
             2,
         )
     # Deferred so environments below 3.11 - which will never reach this
@@ -696,11 +711,11 @@ def load_policy(root: str) -> Policy | None:
     path = os.path.join(root, filename)
     with open(path, encoding="utf-8") as f:
         text = f.read()
-    if filename == ".chwrite":
+    if filename == POLICY_FILENAME_PLAIN:
         version, rules = _parse_plain(text, filename)
-    elif filename == ".chwrite.json":
+    elif filename == POLICY_FILENAME_JSON:
         version, rules = _parse_json(text, filename)
-    elif filename == ".chwrite.toml":
+    elif filename == POLICY_FILENAME_TOML:
         version, rules = _parse_toml(path, filename)
     else:
         yaml_version, yaml_items = parse_yaml_policy(text, filename)
@@ -768,7 +783,7 @@ def _toml_quote(s: str) -> str:
 
 
 def write_plain(path: str, version: int, rules: list[Rule]) -> None:
-    """Serialize rules to the plain `.chwrite` format."""
+    """Serialize rules to the plain `.write_protect` format."""
     lines = [f"version {version}", ""]
     for r in rules:
         keyword = "protect-regex" if r.regex is not None else "protect"
@@ -785,7 +800,7 @@ def write_plain(path: str, version: int, rules: list[Rule]) -> None:
 
 
 def write_json(path: str, version: int, rules: list[Rule]) -> None:
-    """Serialize rules to `.chwrite.json`."""
+    """Serialize rules to `.write_protect.json`."""
     protect: list[dict[str, object]] = []
     for r in rules:
         item: dict[str, object] = {}
@@ -804,7 +819,7 @@ def write_json(path: str, version: int, rules: list[Rule]) -> None:
 
 
 def write_toml(path: str, version: int, rules: list[Rule]) -> None:
-    """Serialize rules to `.chwrite.toml`."""
+    """Serialize rules to `.write_protect.toml`."""
     lines = [f"version = {version}"]
     for r in rules:
         lines.append("")
@@ -824,7 +839,7 @@ def write_toml(path: str, version: int, rules: list[Rule]) -> None:
 
 
 def write_yaml(path: str, version: int, rules: list[Rule]) -> None:
-    """Serialize rules to `.chwrite.yaml`."""
+    """Serialize rules to `.write_protect.yaml`."""
     lines = [f"version: {version}"]
     if not rules:
         lines.append("protect: []")
@@ -846,11 +861,11 @@ def write_yaml(path: str, version: int, rules: list[Rule]) -> None:
 
 
 POLICY_WRITERS = {
-    ".chwrite": write_plain,
-    ".chwrite.json": write_json,
-    ".chwrite.toml": write_toml,
-    ".chwrite.yaml": write_yaml,
-    ".chwrite.yml": write_yaml,
+    POLICY_FILENAME_PLAIN: write_plain,
+    POLICY_FILENAME_JSON: write_json,
+    POLICY_FILENAME_TOML: write_toml,
+    POLICY_FILENAME_YAML: write_yaml,
+    POLICY_FILENAME_YML: write_yaml,
 }
 
 

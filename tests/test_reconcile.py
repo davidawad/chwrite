@@ -25,7 +25,7 @@ def _commit_all(root: str) -> None:
 
 
 def test_reconcile_locks_new_policy_files(repo: str, posix_backend: None) -> None:
-    (Path(repo) / ".chwrite").write_text("version 1\n\nprotect a.txt\n")
+    (Path(repo) / ".write_protect").write_text("version 1\n\nprotect a.txt\n")
     (Path(repo) / "a.txt").write_text("x")
     _commit_all(repo)
 
@@ -41,7 +41,7 @@ def test_reconcile_locks_new_policy_files(repo: str, posix_backend: None) -> Non
 
 
 def test_reconcile_is_idempotent(repo: str, posix_backend: None) -> None:
-    (Path(repo) / ".chwrite").write_text("version 1\n\nprotect a.txt\n")
+    (Path(repo) / ".write_protect").write_text("version 1\n\nprotect a.txt\n")
     (Path(repo) / "a.txt").write_text("x")
     _commit_all(repo)
 
@@ -57,7 +57,7 @@ def test_reconcile_is_idempotent(repo: str, posix_backend: None) -> None:
 
 
 def test_reconcile_drops_entries_removed_from_policy(repo: str, posix_backend: None) -> None:
-    (Path(repo) / ".chwrite").write_text("version 1\n\nprotect a.txt\n")
+    (Path(repo) / ".write_protect").write_text("version 1\n\nprotect a.txt\n")
     (Path(repo) / "a.txt").write_text("x")
     _commit_all(repo)
 
@@ -66,7 +66,7 @@ def test_reconcile_drops_entries_removed_from_policy(repo: str, posix_backend: N
     save_state(repo, state)
     assert "a.txt" in state["files"]
 
-    (Path(repo) / ".chwrite").write_text("version 1\n")
+    (Path(repo) / ".write_protect").write_text("version 1\n")
     state = load_state(repo)
     _, report = reconcile(repo, state)
     save_state(repo, state)
@@ -112,7 +112,7 @@ def test_reconcile_hard_all_relocks_to_hard(repo: str, monkeypatch: pytest.Monke
 
     monkeypatch.setattr("chwrite.backends.linux.subprocess.run", fake_run)
 
-    (Path(repo) / ".chwrite").write_text("version 1\n\nprotect a.txt\n")
+    (Path(repo) / ".write_protect").write_text("version 1\n\nprotect a.txt\n")
     (Path(repo) / "a.txt").write_text("x")
     _commit_all(repo)
 
@@ -158,7 +158,7 @@ def test_reconcile_self_heals_adhoc_lock_that_drifted_unprotected(
 
 
 def test_reconcile_skips_missing_policy_files(repo: str, posix_backend: None) -> None:
-    (Path(repo) / ".chwrite").write_text("version 1\n\nprotect missing.txt\n")
+    (Path(repo) / ".write_protect").write_text("version 1\n\nprotect missing.txt\n")
     # missing.txt intentionally never created/committed - not tracked, so
     # `git ls-files` never resolves it and reconcile has nothing to do.
     _commit_all(repo)
@@ -175,7 +175,7 @@ def test_reconcile_warns_and_skips_symlink_outside_repo(
     outside.write_text("x")
     link = Path(repo) / "link.txt"
     link.symlink_to(outside)
-    (Path(repo) / ".chwrite").write_text("version 1\n\nprotect link.txt\n")
+    (Path(repo) / ".write_protect").write_text("version 1\n\nprotect link.txt\n")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "commit"], cwd=repo, check=True)
 
@@ -189,7 +189,7 @@ def test_reconcile_warns_and_skips_symlink_outside_repo(
 def test_reconcile_updates_message_for_already_locked_policy_file(
     repo: str, posix_backend: None
 ) -> None:
-    (Path(repo) / ".chwrite").write_text('version 1\n\nprotect a.txt message="first"\n')
+    (Path(repo) / ".write_protect").write_text('version 1\n\nprotect a.txt message="first"\n')
     (Path(repo) / "a.txt").write_text("x")
     _commit_all(repo)
 
@@ -198,7 +198,7 @@ def test_reconcile_updates_message_for_already_locked_policy_file(
     save_state(repo, state)
     assert state["files"]["a.txt"]["message"] == "first"
 
-    (Path(repo) / ".chwrite").write_text('version 1\n\nprotect a.txt message="second"\n')
+    (Path(repo) / ".write_protect").write_text('version 1\n\nprotect a.txt message="second"\n')
     state = load_state(repo)
     _, report = reconcile(repo, state)
     save_state(repo, state)
@@ -232,7 +232,7 @@ def test_reconcile_policy_scoped_rule_dispatches_to_scoped_backend(
     )
     monkeypatch.setattr("chwrite.reconcile.unprotect_path", lambda full, entry: None)
 
-    (Path(repo) / ".chwrite").write_text("version 1\n\nprotect a.txt deny-user=bob\n")
+    (Path(repo) / ".write_protect").write_text("version 1\n\nprotect a.txt deny-user=bob\n")
     (Path(repo) / "a.txt").write_text("x")
     _commit_all(repo)
 
@@ -252,7 +252,7 @@ def test_reconcile_policy_scoped_rule_dispatches_to_scoped_backend(
 def test_reconcile_scope_change_from_blanket_to_scoped_triggers_reapply(
     repo: str, posix_backend: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (Path(repo) / ".chwrite").write_text("version 1\n\nprotect a.txt\n")
+    (Path(repo) / ".write_protect").write_text("version 1\n\nprotect a.txt\n")
     (Path(repo) / "a.txt").write_text("x")
     _commit_all(repo)
 
@@ -268,7 +268,7 @@ def test_reconcile_scope_change_from_blanket_to_scoped_triggers_reapply(
         return {"backend": "fake-acl-deny", "level": "ENFORCED", "hard": False, "acl_entries": []}
 
     monkeypatch.setattr("chwrite.reconcile.protect_path_scoped", fake_protect_scoped)
-    (Path(repo) / ".chwrite").write_text("version 1\n\nprotect a.txt deny-user=bob\n")
+    (Path(repo) / ".write_protect").write_text("version 1\n\nprotect a.txt deny-user=bob\n")
     state = load_state(repo)
     _, report = reconcile(repo, state)
     save_state(repo, state)
@@ -323,7 +323,7 @@ def test_reconcile_real_macos_deny_user_end_to_end(repo: str) -> None:
     policy rule actually results in a blocked write via the real macOS ACL
     backend, and unlocking restores it (SPEC.md section 29 + 23's pattern)."""
     me = getpass.getuser()
-    (Path(repo) / ".chwrite").write_text(f"version 1\n\nprotect a.txt deny-user={me}\n")
+    (Path(repo) / ".write_protect").write_text(f"version 1\n\nprotect a.txt deny-user={me}\n")
     (Path(repo) / "a.txt").write_text("x")
     _commit_all(repo)
 

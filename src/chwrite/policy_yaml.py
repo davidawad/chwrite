@@ -1,4 +1,4 @@
-"""YAML-subset parser for .chwrite.yaml/.yml policy files (SPEC.md 24.2, 28, 29).
+"""YAML-subset parser for .write_protect.yaml/.yml policy files (SPEC.md 24.2, 28, 29).
 
 This is NOT a general YAML parser. It supports exactly: a top-level
 mapping with a scalar "version" key and a "protect" block-sequence of
@@ -123,7 +123,7 @@ def _parse_protect_sequence(
 
 
 def parse_yaml_policy(text: str, filename: str) -> tuple[int, list[dict[str, str | None]]]:
-    """Parse a .chwrite.yaml/.yml document into (version, raw protect items).
+    """Parse a .write_protect.yaml/.yml document into (version, raw protect items).
 
     Each item in the returned list is a dict with only the keys actually
     present on that sequence entry, drawn from _PROTECT_ITEM_KEYS. Callers

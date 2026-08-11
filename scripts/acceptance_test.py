@@ -8,7 +8,7 @@ no pytest, no third-party packages, since CI's `acceptance` job intentionally
 skips the dev-tooling setup that `lint-and-unit` uses.
 
 It builds a throwaway git repository under the OS temp dir (never inside
-this checkout), writes a `.chwrite` policy, and drives the committed
+this checkout), writes a `.write_protect` policy, and drives the committed
 `chwrite.py` at the repo root through init/apply/status/verify/check-path/
 unlock via subprocess - exactly the workflow SPEC.md section 23 describes,
 plus the per-message check-path behavior from section 25 and the
@@ -111,7 +111,7 @@ def make_throwaway_repo() -> Path:
     run_git(["config", "user.name", "chwrite acceptance test"], tmp)
     (tmp / "protected.txt").write_text("original content\n", encoding="utf-8")
     (tmp / "unprotected.txt").write_text("nothing special\n", encoding="utf-8")
-    (tmp / ".chwrite").write_text(
+    (tmp / ".write_protect").write_text(
         f'version 1\n\nprotect protected.txt message="{PROTECT_MESSAGE}"\n',
         encoding="utf-8",
     )

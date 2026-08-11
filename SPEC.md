@@ -7,7 +7,7 @@ chwrite is a dependency-free command-line tool that allows a Git repository to d
 A repository commits a small policy file:
 
 ```text
-.chwrite
+.write_protect
 ```
 
 Example:
@@ -158,8 +158,10 @@ This is the minimum universal fallback.
 Filename:
 
 ```text
-.chwrite
+.write_protect
 ```
+
+Every filename variant (this section and 24) derives from a single constant, `POLICY_BASENAME` in `src/chwrite/policy.py` — renaming the policy file's basename is a one-line source change, not a repo-wide find/replace.
 
 The format is deliberately simple and parseable without external libraries.
 
@@ -277,12 +279,12 @@ checkout
   ↓
 global post-checkout hook
   ↓
-chwrite sees .chwrite
+chwrite sees .write_protect
   ↓
 chwrite protects declared files
 ```
 
-No executable code from the repository itself needs to be trusted or executed. The repository contains only the declarative `.chwrite` policy.
+No executable code from the repository itself needs to be trusted or executed. The repository contains only the declarative `.write_protect` policy.
 
 ---
 
@@ -546,7 +548,7 @@ $ chwrite status
 
 chwrite v1
 
-Policy: /project/.chwrite
+Policy: /project/.write_protect
 
 LEVEL      BACKEND         FILE
 ENFORCED   macos-uchg      package-lock.json
@@ -649,8 +651,8 @@ Exit status:
 
 chwrite MUST:
 
-* never execute content from `.chwrite`;
-* treat `.chwrite` purely as data;
+* never execute content from `.write_protect`;
+* treat `.write_protect` purely as data;
 * reject absolute paths;
 * reject paths resolving outside repository root;
 * avoid following symlinks outside repository root;
@@ -718,7 +720,7 @@ chwrite init
 creates:
 
 ```text
-.chwrite
+.write_protect
 ```
 
 Then:
@@ -740,13 +742,13 @@ protect :(glob)migrations/**
 Commit:
 
 ```bash
-git add .chwrite
+git add .write_protect
 git commit -m "Protect generated files"
 ```
 
 Anyone with chwrite globally installed gets the policy automatically after cloning because Git invokes the global `post-checkout` hook following clone.
 
-Someone without chwrite can still clone and use the repository normally; `.chwrite` is inert data.
+Someone without chwrite can still clone and use the repository normally; `.write_protect` is inert data.
 
 ---
 
@@ -801,7 +803,7 @@ The principal use case is preventing coding agents from accidentally or autonomo
 Given:
 
 ```text
-.chwrite
+.write_protect
 
 version 1
 protect protected.txt
@@ -845,7 +847,7 @@ chwrite apply
 
 MUST restore protection.
 
-The same repository and `.chwrite` file MUST function unchanged on macOS, Linux, and Windows.
+The same repository and `.write_protect` file MUST function unchanged on macOS, Linux, and Windows.
 
 ## Sources
 
@@ -869,15 +871,15 @@ Exactly one policy file may exist at the repository root, auto-detected by filen
 Supported filenames, in order chwrite checks for them:
 
 ```text
-.chwrite         plain pathspec format (section 5), extended below
-.chwrite.json
-.chwrite.toml
-.chwrite.yaml / .chwrite.yml
+.write_protect         plain pathspec format (section 5), extended below
+.write_protect.json
+.write_protect.toml
+.write_protect.yaml / .write_protect.yml
 ```
 
 All four formats express the same schema and are interchangeable — pick whichever a given repo's maintainers prefer. This is a convenience for humans authoring policy; it has no effect on enforcement, which is identical regardless of source format.
 
-### 24.1 `.chwrite` (plain) — extended syntax
+### 24.1 `.write_protect` (plain) — extended syntax
 
 ```text
 version 1
@@ -889,7 +891,7 @@ protect .github/workflows/release.yml
 
 The `message="..."` suffix is optional per line. Double quotes only; no escaping beyond a literal `\"` for a literal quote. A line without a message uses the default message (section 24.3).
 
-### 24.2 `.chwrite.json` / `.chwrite.toml` / `.chwrite.yaml`
+### 24.2 `.write_protect.json` / `.write_protect.toml` / `.write_protect.yaml`
 
 Common shape:
 
@@ -935,7 +937,7 @@ Parsing constraints, to honor the "no external libraries" rule in section 1:
 
 ### 24.3 Default message
 
-A rule with no explicit message uses: `"protected by chwrite policy — see .chwrite"` (or the actual policy filename in use).
+A rule with no explicit message uses: `"protected by chwrite policy — see .write_protect"` (or the actual policy filename in use).
 
 ### 24.4 Ad hoc local locks
 
@@ -945,7 +947,7 @@ Independent of the committed policy, a user can protect a path on their own mach
 chwrite lock <path> --message "Dan doesn't want this file touched right now"
 ```
 
-This is recorded only in the uncommitted local state (`.git/chwrite/state.json`, section 9) — never in the repo's `.chwrite*` policy file. It behaves exactly like a policy-driven protection (same enforcement-level rules, same backends) but is personal and machine-local, e.g. "I'm mid-refactor on this file, don't let anything touch it until I say so." `chwrite unlock <path>` removes it.
+This is recorded only in the uncommitted local state (`.git/chwrite/state.json`, section 9) — never in the repo's `.write_protect*` policy file. It behaves exactly like a policy-driven protection (same enforcement-level rules, same backends) but is personal and machine-local, e.g. "I'm mid-refactor on this file, don't let anything touch it until I say so." `chwrite unlock <path>` removes it.
 
 When both a policy rule and an ad hoc lock apply to the same file, the ad hoc lock's message takes precedence when reporting to the user/agent, since it is the more specific, more recently expressed intent.
 
@@ -992,7 +994,7 @@ chwrite/
 ├── src/chwrite/
 │   ├── __init__.py
 │   ├── __main__.py         # argparse entrypoint / command dispatch
-│   ├── policy.py           # .chwrite / .chwrite.json / .toml / .yaml parsing (section 5, 24)
+│   ├── policy.py           # .write_protect / .write_protect.json / .toml / .yaml parsing (section 5, 24)
 │   ├── policy_yaml.py       # the documented YAML subset parser (section 24.2)
 │   ├── state.py             # .git/chwrite/state.json read/write (section 9)
 │   ├── gitutil.py           # git ls-files / pathspec resolution, repo-root safety (section 5, 18)
@@ -1056,7 +1058,7 @@ Alongside pathspec rules (`protect <pathspec>`), policy files may declare regex 
 protect-regex ^migrations/.*\.sql$ message="Migrations are append-only"
 ```
 
-Structured formats (`.chwrite.json`/`.toml`/`.yaml`) express this as an entry with a `regex` field instead of `pattern`:
+Structured formats (`.write_protect.json`/`.toml`/`.yaml`) express this as an entry with a `regex` field instead of `pattern`:
 
 ```json
 {"regex": "^migrations/.*\\.sql$", "message": "Migrations are append-only"}
@@ -1116,7 +1118,7 @@ If `setfacl`/`getfacl` aren't available, or the target filesystem was mounted wi
 
 **`lint-and-unit`** (`ubuntu-latest` only) — the source-level dev-tooling gate: `uv sync`, `just fmt-check lint typecheck test` (ruff format/check, pyright --strict, pytest with the 85% coverage floor from section 27). Fails the build on any of these.
 
-**`acceptance`** — matrix over `[macos-latest, ubuntu-latest, windows-latest]`. Steps: checkout, set up Python 3.11+, run `scripts/acceptance_test.py` (stdlib-only, cross-platform, no `uv`/dev deps required — it's meant to double as documentation-by-execution of section 23's acceptance test) against the committed `chwrite.py`. This script is the executable form of section 23: init a throwaway repo (under the runner's own temp dir, e.g. `tempfile.mkdtemp()` — never inside the checked-out working tree), write a `.chwrite`, apply, assert the write fails while protected, assert `verify` catches an out-of-band flag removal, assert `unlock`/re-`apply` round-trip, assert idempotency (apply x10). It should skip (not fail) any platform-specific assertion that isn't applicable everywhere (e.g. a `deny-group` ACL-caveat check only meaningful on Linux) rather than hard-coding OS branches inline in the CI YAML.
+**`acceptance`** — matrix over `[macos-latest, ubuntu-latest, windows-latest]`. Steps: checkout, set up Python 3.11+, run `scripts/acceptance_test.py` (stdlib-only, cross-platform, no `uv`/dev deps required — it's meant to double as documentation-by-execution of section 23's acceptance test) against the committed `chwrite.py`. This script is the executable form of section 23: init a throwaway repo (under the runner's own temp dir, e.g. `tempfile.mkdtemp()` — never inside the checked-out working tree), write a `.write_protect`, apply, assert the write fails while protected, assert `verify` catches an out-of-band flag removal, assert `unlock`/re-`apply` round-trip, assert idempotency (apply x10). It should skip (not fail) any platform-specific assertion that isn't applicable everywhere (e.g. a `deny-group` ACL-caveat check only meaningful on Linux) rather than hard-coding OS branches inline in the CI YAML.
 
 Both jobs trigger on `push` and `pull_request`. No Docker-based filesystem matrix (ext4/xfs/btrfs/etc.) for now — real OS runners via the matrix above are the bar; this can be revisited later if chwrite needs to support filesystems not backing any of the three GitHub-hosted runner images.
 

@@ -2,11 +2,12 @@
 """chwrite - GENERATED, do not hand-edit.
 
 Regenerate with `just build` (or `python3 scripts/bundle.py`) after
-changing anything under src/chwrite/. This is the single-file,
-stdlib-only distributable artifact described in SPEC.md section 19;
-section 26 explains why the maintained source is a package instead.
+changing anything under src/chwrite/. This is one of the two
+single-file, stdlib-only distributable artifacts described in
+SPEC.md sections 19/32; section 26 explains why the maintained
+source is a package instead.
 
-Generated from src/chwrite/ at commit 249da8c.
+Generated from src/chwrite/ (chwrite 1.0.0).
 """
 
 from __future__ import annotations
@@ -322,7 +323,7 @@ def _parse_protect_sequence(
 
 
 def parse_yaml_policy(text: str, filename: str) -> tuple[int, list[dict[str, str | None]]]:
-    """Parse a .chwrite.yaml/.yml document into (version, raw protect items).
+    """Parse a .write_protect.yaml/.yml document into (version, raw protect items).
 
     Each item in the returned list is a dict with only the keys actually
     present on that sequence entry, drawn from _PROTECT_ITEM_KEYS. Callers
@@ -382,7 +383,22 @@ def parse_yaml_policy(text: str, filename: str) -> tuple[int, list[dict[str, str
 
 # --- policy.py ---------------------------------------------------
 
-POLICY_FILENAMES = [".chwrite", ".chwrite.json", ".chwrite.toml", ".chwrite.yaml", ".chwrite.yml"]
+# Single source of truth for the repo policy file's basename (SPEC.md
+# section 5) - every filename variant below derives from this, so
+# renaming it is a one-line change, not a repo-wide find/replace.
+POLICY_BASENAME = "write_protect"
+POLICY_FILENAME_PLAIN = f".{POLICY_BASENAME}"
+POLICY_FILENAME_JSON = f".{POLICY_BASENAME}.json"
+POLICY_FILENAME_TOML = f".{POLICY_BASENAME}.toml"
+POLICY_FILENAME_YAML = f".{POLICY_BASENAME}.yaml"
+POLICY_FILENAME_YML = f".{POLICY_BASENAME}.yml"
+POLICY_FILENAMES = [
+    POLICY_FILENAME_PLAIN,
+    POLICY_FILENAME_JSON,
+    POLICY_FILENAME_TOML,
+    POLICY_FILENAME_YAML,
+    POLICY_FILENAME_YML,
+]
 ADHOC_DEFAULT_MESSAGE = "protected by chwrite (ad hoc local lock)"
 
 
@@ -620,7 +636,7 @@ def _parse_toml(path: str, filename: str) -> tuple[int, list[Rule]]:
     if sys.version_info < (3, 11):  # noqa: UP036
         raise ChwriteError(
             f"{filename}: TOML policy files require Python 3.11+ (tomllib is not available on this "
-            "interpreter); use .chwrite, .chwrite.json, or .chwrite.yaml instead",
+            "interpreter); use .write_protect, .write_protect.json, or .write_protect.yaml instead",
             2,
         )
     # Deferred so environments below 3.11 - which will never reach this
@@ -696,11 +712,11 @@ def load_policy(root: str) -> Policy | None:
     path = os.path.join(root, filename)
     with open(path, encoding="utf-8") as f:
         text = f.read()
-    if filename == ".chwrite":
+    if filename == POLICY_FILENAME_PLAIN:
         version, rules = _parse_plain(text, filename)
-    elif filename == ".chwrite.json":
+    elif filename == POLICY_FILENAME_JSON:
         version, rules = _parse_json(text, filename)
-    elif filename == ".chwrite.toml":
+    elif filename == POLICY_FILENAME_TOML:
         version, rules = _parse_toml(path, filename)
     else:
         yaml_version, yaml_items = parse_yaml_policy(text, filename)
@@ -768,7 +784,7 @@ def _toml_quote(s: str) -> str:
 
 
 def write_plain(path: str, version: int, rules: list[Rule]) -> None:
-    """Serialize rules to the plain `.chwrite` format."""
+    """Serialize rules to the plain `.write_protect` format."""
     lines = [f"version {version}", ""]
     for r in rules:
         keyword = "protect-regex" if r.regex is not None else "protect"
@@ -785,7 +801,7 @@ def write_plain(path: str, version: int, rules: list[Rule]) -> None:
 
 
 def write_json(path: str, version: int, rules: list[Rule]) -> None:
-    """Serialize rules to `.chwrite.json`."""
+    """Serialize rules to `.write_protect.json`."""
     protect: list[dict[str, object]] = []
     for r in rules:
         item: dict[str, object] = {}
@@ -804,7 +820,7 @@ def write_json(path: str, version: int, rules: list[Rule]) -> None:
 
 
 def write_toml(path: str, version: int, rules: list[Rule]) -> None:
-    """Serialize rules to `.chwrite.toml`."""
+    """Serialize rules to `.write_protect.toml`."""
     lines = [f"version = {version}"]
     for r in rules:
         lines.append("")
@@ -824,7 +840,7 @@ def write_toml(path: str, version: int, rules: list[Rule]) -> None:
 
 
 def write_yaml(path: str, version: int, rules: list[Rule]) -> None:
-    """Serialize rules to `.chwrite.yaml`."""
+    """Serialize rules to `.write_protect.yaml`."""
     lines = [f"version: {version}"]
     if not rules:
         lines.append("protect: []")
@@ -846,11 +862,11 @@ def write_yaml(path: str, version: int, rules: list[Rule]) -> None:
 
 
 POLICY_WRITERS = {
-    ".chwrite": write_plain,
-    ".chwrite.json": write_json,
-    ".chwrite.toml": write_toml,
-    ".chwrite.yaml": write_yaml,
-    ".chwrite.yml": write_yaml,
+    POLICY_FILENAME_PLAIN: write_plain,
+    POLICY_FILENAME_JSON: write_json,
+    POLICY_FILENAME_TOML: write_toml,
+    POLICY_FILENAME_YAML: write_yaml,
+    POLICY_FILENAME_YML: write_yaml,
 }
 
 
@@ -1388,8 +1404,22 @@ def protect_windows(full_path: str, hard: bool) -> ProtectResult:
         # added in the meantime. Removing only our own explicit deny
         # entry is safer and simpler, at the cost of not being a
         # byte-for-byte ACL restore.
+        #
+        # Granular rights (WD,AD,WEA,WA), NOT the simple "(W)" alias:
+        # confirmed on real Windows CI that `/deny user:(W)` denies READS
+        # too, not just writes - icacls's simple "W" write alias silently
+        # includes DELETE, and denying DELETE alone (independent of any
+        # read-related bit) blocks ordinary file reads on Windows for
+        # reasons that don't reduce to documented NTFS generic-rights
+        # mappings. (WD,AD,WEA,WA) - write data/append data/write
+        # extended attributes/write attributes - was verified bit-by-bit
+        # to block write+append while leaving reads unaffected. Omitting
+        # DELETE here doesn't weaken the documented guarantee: section 12
+        # already says Windows can't reliably block delete/rename via a
+        # file-level ACE alone, since the parent directory's
+        # FILE_DELETE_CHILD right can permit it regardless.
         proc = subprocess.run(
-            [icacls, full_path, "/deny", f"{user}:(W)"], capture_output=True, check=False
+            [icacls, full_path, "/deny", f"{user}:(WD,AD,WEA,WA)"], capture_output=True, check=False
         )
         if proc.returncode == 0:
             return {
@@ -1468,8 +1498,11 @@ def protect_windows_scoped(
         )
     applied: list[str] = []
     for name in [*deny_user, *deny_group]:
+        # (WD,AD,WEA,WA), not the simple "(W)" alias - see protect_windows()
+        # above for why: "(W)" silently includes DELETE, and denying
+        # DELETE alone blocks ordinary file reads on Windows.
         proc = subprocess.run(
-            [icacls, full_path, "/deny", f"{name}:(W)"], capture_output=True, check=False
+            [icacls, full_path, "/deny", f"{name}:(WD,AD,WEA,WA)"], capture_output=True, check=False
         )
         if proc.returncode != 0:
             stderr = proc.stderr.decode(errors="replace").strip()
@@ -1937,10 +1970,7 @@ def install_claude_hook(repo_dir: str) -> None:
     print(f"added chwrite PreToolUse hook to {settings_path} (assumes 'chwrite' is on PATH)")
 
 
-# --- hooks.py ----------------------------------------------------
-
-HOOK_NAMES = ["post-checkout", "post-merge", "post-rewrite", "pre-commit", "pre-push"]
-
+# --- config_paths.py ---------------------------------------------
 
 def config_dir() -> str:
     """Per-user chwrite install directory (SPEC.md section 6)."""
@@ -1951,101 +1981,6 @@ def config_dir() -> str:
         return os.path.join(base, "chwrite")
     base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
     return os.path.join(base, "chwrite")
-
-
-def _hook_script(name: str, chwrite_py_path: str) -> str:
-    # Git always executes hooks through a shell (on Windows, via the
-    # sh.exe bundled with Git for Windows), so a single POSIX-style
-    # shebang script works unmodified on macOS, Linux, and Windows - no
-    # separate .cmd hook is needed.
-    sub = "verify" if name in ("pre-commit", "pre-push") else "apply --quiet"
-    return (
-        "#!/bin/sh\n"
-        "# Installed by `chwrite install`; safe to delete if you uninstall chwrite.\n"
-        f'exec python3 "{chwrite_py_path}" {sub}\n'
-    )
-
-
-def cmd_install(args: argparse.Namespace) -> int:
-    """Install chwrite + global git hooks for the current OS user."""
-    cfg_dir = config_dir()
-    os.makedirs(cfg_dir, exist_ok=True)
-    dest_py = os.path.join(cfg_dir, "chwrite.py")
-    src_py = os.path.realpath(__file__)
-    if os.path.realpath(dest_py) != src_py:
-        shutil.copy2(src_py, dest_py)
-    os.chmod(dest_py, 0o755)
-
-    hooks_dir = os.path.join(cfg_dir, "hooks")
-    os.makedirs(hooks_dir, exist_ok=True)
-    for name in HOOK_NAMES:
-        hook_path = os.path.join(hooks_dir, name)
-        with open(hook_path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(_hook_script(name, dest_py))
-        os.chmod(hook_path, 0o755)
-
-    proc = subprocess.run(
-        ["git", "config", "--global", "--get", "core.hooksPath"], capture_output=True, check=False
-    )
-    current = proc.stdout.decode(errors="replace").strip() if proc.returncode == 0 else None
-    current_real = os.path.realpath(current) if current else None
-    if current and current_real != os.path.realpath(hooks_dir) and not args.force:
-        raise ChwriteError(
-            f"core.hooksPath is already set to '{current}'.\n"
-            f"chwrite will not silently overwrite it. Re-run 'chwrite install --force' to point it "
-            f"at {hooks_dir} instead, or configure it manually.",
-            2,
-        )
-    subprocess.run(["git", "config", "--global", "core.hooksPath", hooks_dir], check=True)
-
-    print(f"installed chwrite to {dest_py}")
-    print(f"installed global git hooks to {hooks_dir}")
-    print("core.hooksPath configured")
-
-    if args.claude_hook:
-        install_claude_hook(os.getcwd())
-    return 0
-
-
-def cmd_uninstall(_args: argparse.Namespace) -> int:
-    """Remove the global chwrite install/hooks and unlock the current repo."""
-    cfg_dir = config_dir()
-    hooks_dir = os.path.join(cfg_dir, "hooks")
-
-    proc = subprocess.run(
-        ["git", "config", "--global", "--get", "core.hooksPath"], capture_output=True, check=False
-    )
-    current = proc.stdout.decode(errors="replace").strip() if proc.returncode == 0 else None
-    if current and os.path.realpath(current) == os.path.realpath(hooks_dir):
-        subprocess.run(["git", "config", "--global", "--unset", "core.hooksPath"], check=False)
-        print("removed core.hooksPath")
-    elif current:
-        print(f"core.hooksPath points elsewhere ({current}); leaving it alone")
-
-    try:
-        root = repo_root()
-    except ChwriteError:
-        root = None
-    if root:
-        state = load_state(root)
-        files = state["files"]
-        count = 0
-        for _rel, entry in files.items():
-            if entry.get("locked"):
-                full = os.path.join(root, _rel)
-                if os.path.exists(full):
-                    unprotect_path(full, entry)
-                count += 1
-        if count:
-            print(f"unlocked {count} file(s) in {root}")
-        state_dir, _ = state_paths(root)
-        if os.path.isdir(state_dir):
-            shutil.rmtree(state_dir)
-
-    if os.path.isdir(cfg_dir):
-        shutil.rmtree(cfg_dir)
-        print(f"removed {cfg_dir}")
-    return 0
 
 
 # --- diagnostics.py ----------------------------------------------
@@ -2315,10 +2250,10 @@ def cmd_init(args: _InitArgs) -> int:
     if existing:
         raise ChwriteError(f"a chwrite policy file already exists: {existing}", 2)
     filename = {
-        "plain": ".chwrite",
-        "json": ".chwrite.json",
-        "toml": ".chwrite.toml",
-        "yaml": ".chwrite.yaml",
+        "plain": POLICY_FILENAME_PLAIN,
+        "json": POLICY_FILENAME_JSON,
+        "toml": POLICY_FILENAME_TOML,
+        "yaml": POLICY_FILENAME_YAML,
     }[args.format]
     path = os.path.join(root, filename)
     POLICY_WRITERS[filename](path, 1, [])
@@ -2639,16 +2574,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="read a Claude Code PreToolUse payload from stdin",
     )
     sp.set_defaults(func=cmd_check_path)
-
-    sp = sub.add_parser("install", help="install chwrite globally for this user")
-    sp.add_argument("--force", action="store_true", help="overwrite an existing core.hooksPath")
-    sp.add_argument(
-        "--claude-hook", action="store_true", help="also add a project-scoped Claude Code hook here"
-    )
-    sp.set_defaults(func=cmd_install)
-
-    sp = sub.add_parser("uninstall", help="remove the global chwrite install and hooks")
-    sp.set_defaults(func=cmd_uninstall)
 
     sp = sub.add_parser("doctor", help="diagnose chwrite installation/backend health")
     sp.set_defaults(func=cmd_doctor)

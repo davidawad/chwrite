@@ -14,7 +14,7 @@ def _init_repo(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, check=True)
-    (tmp_path / ".chwrite").write_text(
+    (tmp_path / ".write_protect").write_text(
         'version 1\n\nprotect protected.txt message="do not touch"\n'
     )
     (tmp_path / "protected.txt").write_text("x")

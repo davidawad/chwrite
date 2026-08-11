@@ -23,7 +23,7 @@ def _commit_all(root: str, message: str = "commit") -> None:
 
 
 def _write_policy(root: str, body: str) -> None:
-    (Path(root) / ".chwrite").write_text(body)
+    (Path(root) / ".write_protect").write_text(body)
 
 
 # ---------------------------------------------------------------------------

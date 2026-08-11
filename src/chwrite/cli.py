@@ -23,6 +23,10 @@ from chwrite.gitutil import (
 )
 from chwrite.policy import (
     ADHOC_DEFAULT_MESSAGE,
+    POLICY_FILENAME_JSON,
+    POLICY_FILENAME_PLAIN,
+    POLICY_FILENAME_TOML,
+    POLICY_FILENAME_YAML,
     POLICY_WRITERS,
     Rule,
     find_policy_file,
@@ -102,10 +106,10 @@ def cmd_init(args: _InitArgs) -> int:
     if existing:
         raise ChwriteError(f"a chwrite policy file already exists: {existing}", 2)
     filename = {
-        "plain": ".chwrite",
-        "json": ".chwrite.json",
-        "toml": ".chwrite.toml",
-        "yaml": ".chwrite.yaml",
+        "plain": POLICY_FILENAME_PLAIN,
+        "json": POLICY_FILENAME_JSON,
+        "toml": POLICY_FILENAME_TOML,
+        "yaml": POLICY_FILENAME_YAML,
     }[args.format]
     path = os.path.join(root, filename)
     POLICY_WRITERS[filename](path, 1, [])

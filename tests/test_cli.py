@@ -27,7 +27,7 @@ def _commit_all(root: str, message: str = "commit") -> None:
 
 
 def _write_policy(root: str, body: str) -> None:
-    (Path(root) / ".chwrite").write_text(body)
+    (Path(root) / ".write_protect").write_text(body)
 
 
 # ---------------------------------------------------------------------------
@@ -38,12 +38,16 @@ def _write_policy(root: str, body: str) -> None:
 def test_cmd_init_creates_plain_policy(repo: str) -> None:
     code = cli.main(["init"])
     assert code == 0
-    assert (Path(repo) / ".chwrite").read_text() == "version 1\n\n"
+    assert (Path(repo) / ".write_protect").read_text() == "version 1\n\n"
 
 
 @pytest.mark.parametrize(
     ("fmt", "filename"),
-    [("json", ".chwrite.json"), ("toml", ".chwrite.toml"), ("yaml", ".chwrite.yaml")],
+    [
+        ("json", ".write_protect.json"),
+        ("toml", ".write_protect.toml"),
+        ("yaml", ".write_protect.yaml"),
+    ],
 )
 def test_cmd_init_creates_other_formats(repo: str, fmt: str, filename: str) -> None:
     code = cli.main(["init", "--format", fmt])
@@ -61,7 +65,7 @@ def test_cmd_add_appends_rule(repo: str, capsys: pytest.CaptureFixture[str]) -> 
     cli.main(["init"])
     code = cli.main(["add", "package-lock.json", "--message", "do not touch"])
     assert code == 0
-    text = (Path(repo) / ".chwrite").read_text()
+    text = (Path(repo) / ".write_protect").read_text()
     assert 'protect package-lock.json message="do not touch"' in text
     out = capsys.readouterr().out
     assert "package-lock.json" in out
@@ -71,7 +75,7 @@ def test_cmd_add_updates_existing_rule_message(repo: str) -> None:
     cli.main(["init"])
     cli.main(["add", "foo.txt", "--message", "first"])
     cli.main(["add", "foo.txt", "--message", "second"])
-    text = (Path(repo) / ".chwrite").read_text()
+    text = (Path(repo) / ".write_protect").read_text()
     assert text.count("protect foo.txt") == 1
     assert 'message="second"' in text
 
@@ -92,7 +96,7 @@ def test_cmd_remove_removes_rule(repo: str) -> None:
     cli.main(["add", "foo.txt"])
     code = cli.main(["remove", "foo.txt"])
     assert code == 0
-    text = (Path(repo) / ".chwrite").read_text()
+    text = (Path(repo) / ".write_protect").read_text()
     assert "foo.txt" not in text
 
 
