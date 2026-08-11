@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""chwrite - GENERATED, do not hand-edit.
+"""chwrite-setup - GENERATED, do not hand-edit.
 
 Regenerate with `just build` (or `python3 scripts/bundle.py`) after
 changing anything under src/chwrite/. This is one of the two
@@ -26,7 +26,6 @@ from typing import Any, Literal, NotRequired, TypedDict
 import contextlib
 import getpass
 import platform
-from typing import NamedTuple
 import argparse
 
 # --- errors.py ---------------------------------------------------
@@ -1649,132 +1648,6 @@ def query_path(full_path: str, entry: FileEntry | None = None) -> tuple[str, str
     return BACKENDS[PLATFORM][2](full_path)
 
 
-# --- reconcile.py ------------------------------------------------
-
-class ReconcileEvent(NamedTuple):
-    """One thing reconcile() did, for apply/lock to report to the user."""
-
-    kind: str  # "locked" | "relocked" | "removed"
-    rel: str
-    level: str | None = None
-
-
-def reconcile(  # noqa: PLR0912, PLR0915
-    root: str, state: StateDoc, hard_all: bool = False
-) -> tuple[Policy | None, list[ReconcileEvent]]:
-    """Sync OS-level protection to the current policy file + self-heal.
-
-    Branch count intentionally not reduced further: this is the one place
-    the three reconciliation phases (drop removed-from-policy entries,
-    (re)lock desired policy files, self-heal ad hoc locks) live together
-    so `apply`/`lock`'s idempotency and section 23's acceptance test are
-    easy to reason about from a single function; splitting it up would
-    trade that for indirection without reducing real complexity.
-
-    Also re-protects any currently-locked entry (policy or ad hoc) whose
-    OS-level protection has drifted away (e.g. a file replaced by checkout
-    or merge, per SPEC.md sections 7-8). Idempotent: a no-op second call
-    performs no OS calls and produces an empty report.
-
-    A policy rule's deny-user=/deny-group= scope (section 29) is applied
-    via protect_path_scoped() instead of the blanket protect_path(); a
-    scope change (including scoped -> blanket or vice versa) is itself
-    treated as "needs reapply", same as a level/lock-state drift.
-    """
-    policy = load_policy(root)
-    desired = resolve_policy_files(root, policy)
-    files = state["files"]
-    report: list[ReconcileEvent] = []
-
-    for rel in list(files.keys()):
-        entry = files[rel]
-        if entry.get("source") == "policy" and rel not in desired:
-            full = os.path.join(root, rel)
-            if entry.get("locked") and os.path.exists(full):
-                unprotect_path(full, entry)
-            del files[rel]
-            report.append(ReconcileEvent("removed", rel))
-
-    for rel, resolved in desired.items():
-        full = os.path.join(root, rel)
-        if not os.path.exists(full):
-            continue
-        if not check_symlink_safety(full, root):
-            sys.stderr.write(f"warning: refusing to protect symlink outside repo root: {rel}\n")
-            continue
-        entry = files.get(rel)
-        desired_scope = make_scope(resolved.deny_user, resolved.deny_group)
-        want_hard = hard_all or bool(entry and entry.get("hard"))
-        actual_level, _ = query_path(full, entry)
-        needs_apply = (
-            entry is None
-            or not entry.get("locked")
-            or actual_level == "UNPROTECTED"
-            or entry.get("scope", "all") != desired_scope
-            or (want_hard and desired_scope == "all" and entry.get("level") != "HARD")
-        )
-        if needs_apply:
-            original_mode = determine_original_mode(full, entry)
-            if desired_scope != "all":
-                result = protect_path_scoped(
-                    full, list(resolved.deny_user), list(resolved.deny_group)
-                )
-            else:
-                result = protect_path(full, hard=want_hard)
-            new_entry: FileEntry = {
-                "backend": result["backend"],
-                "level": result["level"],
-                "original_mode": original_mode,
-                "locked": True,
-                "source": "policy",
-                "message": resolved.message,
-                "hard": result.get("hard", False),
-                "scope": desired_scope,
-            }
-            if "acl_user" in result:
-                new_entry["acl_user"] = result["acl_user"]
-            if "acl_entries" in result:
-                new_entry["acl_entries"] = result["acl_entries"]
-            files[rel] = new_entry
-            report.append(ReconcileEvent("locked", rel, new_entry["level"]))
-        else:
-            # needs_apply's `entry is None` arm being false means this
-            # branch only runs when entry is not None; spelled out so the
-            # type checker can see it too.
-            assert entry is not None
-            entry["message"] = resolved.message
-            entry["source"] = "policy"
-
-    for rel, entry in list(files.items()):
-        if entry.get("source") == "adhoc" and entry.get("locked"):
-            full = os.path.join(root, rel)
-            if not os.path.exists(full):
-                continue
-            actual_level, _ = query_path(full, entry)
-            if actual_level == "UNPROTECTED":
-                if not check_symlink_safety(full, root):
-                    sys.stderr.write(
-                        f"warning: refusing to protect symlink outside repo root: {rel}\n"
-                    )
-                    continue
-                scope = entry.get("scope", "all")
-                if scope != "all":
-                    result = protect_path_scoped(
-                        full, scope_deny_user(scope), scope_deny_group(scope)
-                    )
-                else:
-                    result = protect_path(full, hard=entry.get("hard", False))
-                entry["backend"] = result["backend"]
-                entry["level"] = result["level"]
-                if "acl_user" in result:
-                    entry["acl_user"] = result["acl_user"]
-                if "acl_entries" in result:
-                    entry["acl_entries"] = result["acl_entries"]
-                report.append(ReconcileEvent("relocked", rel, entry["level"]))
-
-    return policy, report
-
-
 # --- claude_hook.py ----------------------------------------------
 
 CLAUDE_HOOK_MATCHER = "Edit|MultiEdit|Write|NotebookEdit"
@@ -1951,600 +1824,170 @@ def config_dir() -> str:
     return os.path.join(base, "chwrite")
 
 
-# --- diagnostics.py ----------------------------------------------
+# --- hooks.py ----------------------------------------------------
 
-LINUX_DENY_GROUP_CAVEAT = (
-    "NOTE: deny-group is best-effort on Linux - POSIX ACL group entries are additive, so this "
-    "only reliably blocks the target group if the affected user has no other group membership "
-    "granting the same access (SPEC.md section 29.1). Affected files:"
-)
+HOOK_NAMES = ["post-checkout", "post-merge", "post-rewrite", "pre-commit", "pre-push"]
 
 
-@dataclass
-class _VerifyArgs:
-    quiet: bool
+def _hook_script(name: str, chwrite_py_path: str) -> str:
+    # Git always executes hooks through a shell (on Windows, via the
+    # sh.exe bundled with Git for Windows), so a single POSIX-style
+    # shebang script works unmodified on macOS, Linux, and Windows - no
+    # separate .cmd hook is needed.
+    sub = "verify" if name in ("pre-commit", "pre-push") else "apply --quiet"
+    return (
+        "#!/bin/sh\n"
+        "# Installed by `chwrite-setup install`; safe to delete if you uninstall chwrite.\n"
+        f'exec python3 "{chwrite_py_path}" {sub}\n'
+    )
 
 
-def _linux_deny_group_files(state: StateDoc) -> list[str]:
-    """Files with an active deny-group scope on Linux (SPEC.md 29.1, 29.2)."""
-    if PLATFORM != "linux":
-        return []
-    out: list[str] = []
-    for rel, entry in sorted(state["files"].items()):
-        if not entry.get("locked"):
-            continue
-        scope = entry.get("scope", "all")
-        if isinstance(scope, dict) and scope.get("deny_group"):
-            out.append(rel)
-    return out
+def _hook_script_on_path(name: str) -> str:
+    """Variant of _hook_script() for when `chwrite` is already a real,
+    durable command on PATH (pip/pipx/Homebrew/npm/AUR/apt install,
+    SPEC.md section 31) - invoke it directly, no interpreter/file path
+    to hardcode, same as any other installed tool's hooks would."""
+    sub = "verify" if name in ("pre-commit", "pre-push") else "apply --quiet"
+    return (
+        "#!/bin/sh\n"
+        "# Installed by `chwrite-setup install`; safe to delete if you uninstall chwrite.\n"
+        f"exec chwrite {sub}\n"
+    )
 
 
-def _print_deny_group_caveat(state: StateDoc) -> None:
-    """Emit the section 29.1 caveat whenever a deny-group scope is active on
-    Linux - every invocation, not just once (shared by status/doctor)."""
-    group_caveat_files = _linux_deny_group_files(state)
-    if group_caveat_files:
-        print()
-        print(LINUX_DENY_GROUP_CAVEAT)
-        for rel in group_caveat_files:
-            print(f"  {rel}")
+def _find_chwrite_py() -> tuple[str, bool]:
+    """Locate the hot-path chwrite to install hooks against (SPEC.md
+    32.2). Returns (path_or_command, is_on_path).
+
+    Preference order: a `chwrite` already on PATH (durable, no copy
+    needed - the common case for anyone who installed via a package
+    manager, SPEC.md section 31), else a sibling chwrite.py next to
+    wherever chwrite-setup.py itself is running from (the curl-one-file
+    case, mirroring how the `chwrite`/`chwrite.cmd` launchers resolve
+    their own sibling chwrite.py, SPEC.md section 19).
+    """
+    on_path = shutil.which("chwrite")
+    if on_path:
+        return on_path, True
+    self_dir = os.path.dirname(os.path.realpath(__file__))
+    sibling = os.path.join(self_dir, "chwrite.py")
+    if os.path.isfile(sibling):
+        return sibling, False
+    raise ChwriteError(
+        "could not find chwrite: no 'chwrite' on PATH and no sibling chwrite.py next to "
+        "chwrite-setup. Install chwrite first (pip/pipx/Homebrew/npm/AUR/apt, or download "
+        "chwrite.py next to this script), then re-run chwrite-setup install.",
+        2,
+    )
 
 
-def cmd_status(_args: argparse.Namespace) -> int:
-    """Show current protection state, inspecting real OS state (section 9)."""
-    root = repo_root()
-    policy = load_policy(root)
-    state = load_state(root)
-    files = state["files"]
+def cmd_install(args: argparse.Namespace) -> int:
+    """Install chwrite's global git hooks for the current OS user."""
+    cfg_dir = config_dir()
+    os.makedirs(cfg_dir, exist_ok=True)
 
-    print("chwrite v1")
-    print()
-    print(f"Policy: {policy.path if policy else '(none)'}")
-    print()
+    chwrite_ref, is_on_path = _find_chwrite_py()
+    if is_on_path:
+        print(f"using chwrite already on PATH: {chwrite_ref}")
+    else:
+        dest_py = os.path.join(cfg_dir, "chwrite.py")
+        if os.path.realpath(dest_py) != os.path.realpath(chwrite_ref):
+            shutil.copy2(chwrite_ref, dest_py)
+        os.chmod(dest_py, 0o755)
+        chwrite_ref = dest_py
+        print(f"installed chwrite to {dest_py}")
 
-    rows: list[tuple[str, str, str]] = []
-    protected_count = 0
-    violation_count = 0
-    for rel in sorted(files.keys()):
-        entry = files[rel]
-        if not entry.get("locked"):
-            continue
-        full = os.path.join(root, rel)
-        actual_level, actual_backend = query_path(full, entry)
-        if actual_level in ("MISSING", "UNPROTECTED"):
-            violation_count += 1
-        else:
-            protected_count += 1
-        rows.append((actual_level, actual_backend or entry.get("backend", "-"), rel))
+    hooks_dir = os.path.join(cfg_dir, "hooks")
+    os.makedirs(hooks_dir, exist_ok=True)
+    for name in HOOK_NAMES:
+        hook_path = os.path.join(hooks_dir, name)
+        body = _hook_script_on_path(name) if is_on_path else _hook_script(name, chwrite_ref)
+        with open(hook_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(body)
+        os.chmod(hook_path, 0o755)
 
-    if rows:
-        print(f"{'LEVEL':<10} {'BACKEND':<15} FILE")
-        for level, backend, rel in rows:
-            print(f"{level:<10} {backend:<15} {rel}")
-        print()
-
-    print(f"{protected_count} protected")
-    print(f"{violation_count} violations")
-
-    _print_deny_group_caveat(state)
-
-    return 1 if violation_count else 0
-
-
-def cmd_verify(args: _VerifyArgs) -> int:
-    """Check protected files for modification/deletion/flag removal (17)."""
-    root = repo_root()
-    state = load_state(root)
-    files = state["files"]
-    violations: list[tuple[str, str]] = []
-
-    for rel, entry in sorted(files.items()):
-        if not entry.get("locked"):
-            continue
-        full = os.path.join(root, rel)
-        if not os.path.exists(full):
-            violations.append(("D", rel))
-            continue
-        proc = run_git(["status", "--porcelain", "-z", "--", rel], cwd=root, check=False)
-        raw = proc.stdout.decode("utf-8", errors="surrogateescape")
-        for item in filter(None, raw.split("\x00")):
-            if len(item) < 3:
-                continue
-            code = item[:2].strip() or "?"
-            path = item[3:]
-            violations.append((code, path))
-        actual_level, _ = query_path(full, entry)
-        if actual_level == "UNPROTECTED":
-            violations.append(("FLAGS-REMOVED", rel))
-
-    if violations:
-        sys.stderr.write("ERROR: chwrite violation\n\n")
-        for code, path in violations:
-            sys.stderr.write(f"{code} {path}\n")
-        sys.stderr.write("\nRun:\n\n    chwrite status\n")
-        return 1
-
-    if not args.quiet:
-        print("chwrite verify: OK")
-    return 0
-
-
-def _doctor_print_tools() -> None:
-    tool_map = {
-        "macos": ["chflags", "chmod"],
-        "linux": ["chattr", "lsattr"],
-        "windows": ["icacls"],
-        "posix": ["chmod"],
-    }
-    for tool in tool_map.get(PLATFORM, []):
-        found = shutil.which(tool)
-        print(f"  {tool}: {'found at ' + found if found else 'NOT FOUND'}")
-    if PLATFORM == "linux":
-        print(f"  ACL support (deny-user/deny-group): {linux_acl_capability()}")
-
-
-def _doctor_print_hooks_path(cfg_dir: str) -> None:
     proc = subprocess.run(
         ["git", "config", "--global", "--get", "core.hooksPath"], capture_output=True, check=False
     )
-    hooks_path = proc.stdout.decode(errors="replace").strip() if proc.returncode == 0 else None
-    expected = os.path.join(cfg_dir, "hooks")
-    if hooks_path:
-        matches = os.path.realpath(hooks_path) == os.path.realpath(expected)
-        suffix = " (matches chwrite install)" if matches else " (points elsewhere)"
-        print(f"core.hooksPath: {hooks_path}{suffix}")
-    else:
-        print("core.hooksPath: not set")
-
-
-def _doctor_print_privilege_note() -> None:
-    if PLATFORM == "linux":
-        is_root = hasattr(os, "geteuid") and os.geteuid() == 0
-        privilege_note = (
-            "root (HARD protection available)"
-            if is_root
-            else "unprivileged (chattr +i will require sudo)"
-        )
-        print(f"privilege: {privilege_note}")
-    elif PLATFORM == "macos":
-        print("privilege: uchg (ENFORCED) requires no elevation for files you own;")
-        print("           schg is not implemented")
-    elif PLATFORM == "windows":
-        print("privilege: icacls deny ACE (ENFORCED) requires no elevation for files you own")
-
-
-def _doctor_print_repo_section() -> None:
-    try:
-        root = repo_root()
-        print()
-        print(f"Repository: {root}")
-        filename = find_policy_file(root)
-        print(f"Policy file: {filename if filename else '(none)'}")
-        _print_deny_group_caveat(load_state(root))
-    except ChwriteError as e:
-        print()
-        print(f"Not currently inside a git repository ({e})")
-
-
-def cmd_doctor(_args: argparse.Namespace) -> int:
-    """Diagnose OS/backend/install/hook health (SPEC.md section 21, 29.1)."""
-    print("chwrite doctor")
-    print()
-    print(f"OS: {platform.system()} {platform.release()} ({platform.machine()})")
-    print(f"Detected backend: {PLATFORM}")
-    _doctor_print_tools()
-
-    git_path = shutil.which("git")
-    if git_path:
-        proc = subprocess.run(["git", "--version"], capture_output=True, check=False)
-        print(f"git: {proc.stdout.decode(errors='replace').strip()} ({git_path})")
-    else:
-        print("git: NOT FOUND (required)")
-
-    cfg_dir = config_dir()
-    dest_py = os.path.join(cfg_dir, "chwrite.py")
-    install_note = dest_py if os.path.isfile(dest_py) else "not installed (run chwrite install)"
-    print(f"global install: {install_note}")
-
-    _doctor_print_hooks_path(cfg_dir)
-    _doctor_print_privilege_note()
-    _doctor_print_repo_section()
-    return 0
-
-
-# --- cli.py ------------------------------------------------------
-
-# The dataclasses below give each cmd_*() function's body real static
-# typing for its arguments. At runtime argparse hands every command a
-# plain argparse.Namespace (see main()); its attributes match these
-# fields structurally (argparse sets them by the `dest` name), so this is
-# the standard "lie to the type checker at the untyped boundary" idiom
-# for making the rest of an argparse-based CLI checkable under strict
-# mode without a third-party typed-argparse dependency.
-
-
-@dataclass
-class _InitArgs:
-    format: str
-
-
-@dataclass
-class _AddArgs:
-    pathspec: str
-    message: str | None
-
-
-@dataclass
-class _RemoveArgs:
-    pathspec: str
-
-
-@dataclass
-class _ApplyArgs:
-    quiet: bool
-
-
-@dataclass
-class _LockArgs:
-    path: str | None
-    hard: bool
-    message: str | None
-    deny_user: str | None
-    deny_group: str | None
-
-
-@dataclass
-class _UnlockArgs:
-    path: str | None
-    all: bool
-
-
-@dataclass
-class _UnlockedArgs:
-    command: list[str]
-
-
-def _split_names(raw: str | None) -> list[str]:
-    """Parse a comma-separated --deny-user/--deny-group CLI value."""
-    if not raw:
-        return []
-    return [n.strip() for n in raw.split(",") if n.strip()]
-
-
-def cmd_init(args: _InitArgs) -> int:
-    """Create a new, empty policy file (SPEC.md section 20)."""
-    root = repo_root()
-    existing = find_policy_file(root)
-    if existing:
-        raise ChwriteError(f"a chwrite policy file already exists: {existing}", 2)
-    filename = {
-        "plain": ".chwrite",
-        "json": ".chwrite.json",
-        "toml": ".chwrite.toml",
-        "yaml": ".chwrite.yaml",
-    }[args.format]
-    path = os.path.join(root, filename)
-    POLICY_WRITERS[filename](path, 1, [])
-    print(f"created {filename}")
-    return 0
-
-
-def cmd_add(args: _AddArgs) -> int:
-    """Add (or update) a protect rule in the existing policy file."""
-    root = repo_root()
-    filename = find_policy_file(root)
-    if filename is None:
-        raise ChwriteError("no chwrite policy file found; run 'chwrite init' first", 2)
-    policy = load_policy(root)
-    assert policy is not None  # find_policy_file already confirmed one exists
-    validate_pathspec(args.pathspec, root)
-    rules = list(policy.rules)
-    for idx, r in enumerate(rules):
-        if r.pattern == args.pathspec:
-            rules[idx] = Rule(
-                args.pathspec,
-                args.message if args.message is not None else r.message,
-                r.regex,
-                r.deny_user,
-                r.deny_group,
-            )
-            break
-    else:
-        rules.append(Rule(args.pathspec, args.message))
-    POLICY_WRITERS[filename](policy.path, policy.version, rules)
-    suffix = f' message="{args.message}"' if args.message else ""
-    print(f"protect {args.pathspec}{suffix}  ({filename})")
-    return 0
-
-
-def cmd_remove(args: _RemoveArgs) -> int:
-    """Remove a protect rule from the existing policy file."""
-    root = repo_root()
-    filename = find_policy_file(root)
-    if filename is None:
-        raise ChwriteError("no chwrite policy file found; run 'chwrite init' first", 2)
-    policy = load_policy(root)
-    assert policy is not None
-    rules = [r for r in policy.rules if r.pattern != args.pathspec]
-    if len(rules) == len(policy.rules):
-        sys.stderr.write(f"no rule found for pathspec: {args.pathspec}\n")
-        return 1
-    POLICY_WRITERS[filename](policy.path, policy.version, rules)
-    print(f"removed {args.pathspec}  ({filename})")
-    return 0
-
-
-def cmd_apply(args: _ApplyArgs) -> int:
-    """(Re)apply protection according to the policy file. Idempotent."""
-    root = repo_root()
-    state = load_state(root)
-    _, report = reconcile(root, state, hard_all=False)
-    save_state(root, state)
-    if not args.quiet:
-        if not report:
-            print("chwrite apply: nothing to do (already up to date)")
-        else:
-            for event in report:
-                if event.kind in ("locked", "relocked"):
-                    print(f"{event.kind} {event.rel}  [{event.level}]")
-                elif event.kind == "removed":
-                    print(f"unprotected {event.rel}  (no longer in policy)")
-    return 0
-
-
-def _cmd_lock_single(args: _LockArgs, root: str, state: StateDoc) -> int:
-    assert args.path is not None
-    rel = normalize_local_arg_path(args.path, root)
-    full = os.path.join(root, rel)
-    if not os.path.exists(full):
-        raise ChwriteError(f"no such file: {args.path}", 2)
-    if not check_symlink_safety(full, root):
-        raise ChwriteError(f"refusing to protect symlink pointing outside repo root: {rel}", 2)
-    entry = state["files"].get(rel)
-    original_mode = determine_original_mode(full, entry)
-    message = args.message
-    if message is None and entry and entry.get("source") == "adhoc":
-        message = entry.get("message")
-    if message is None:
-        message = ADHOC_DEFAULT_MESSAGE
-
-    deny_user = _split_names(args.deny_user)
-    deny_group = _split_names(args.deny_group)
-    scope = make_scope(deny_user, deny_group)
-    if scope != "all":
-        if args.hard:
-            raise ChwriteError(
-                "--hard cannot be combined with --deny-user/--deny-group scoped locks "
-                "(scoped ACL-deny backends only offer ENFORCED, never HARD - SPEC.md section 29)",
-                2,
-            )
-        result = protect_path_scoped(full, deny_user, deny_group)
-    else:
-        result = protect_path(full, hard=args.hard)
-
-    new_entry: FileEntry = {
-        "backend": result["backend"],
-        "level": result["level"],
-        "original_mode": original_mode,
-        "locked": True,
-        "source": "adhoc",
-        "message": message,
-        "hard": result.get("hard", False),
-        "scope": scope,
-    }
-    if "acl_user" in result:
-        new_entry["acl_user"] = result["acl_user"]
-    if "acl_entries" in result:
-        new_entry["acl_entries"] = result["acl_entries"]
-    state["files"][rel] = new_entry
-    save_state(root, state)
-    print(f"locked {rel}  [{result['level']}]")
-    if args.hard and result["level"] != "HARD":
-        return 1
-    return 0
-
-
-def cmd_lock(args: _LockArgs) -> int:
-    """Lock all protected files, or ad hoc lock a single path (24.4, 29)."""
-    root = repo_root()
-    state = load_state(root)
-
-    if args.path:
-        return _cmd_lock_single(args, root, state)
-
-    if args.deny_user or args.deny_group:
+    current = proc.stdout.decode(errors="replace").strip() if proc.returncode == 0 else None
+    current_real = os.path.realpath(current) if current else None
+    if current and current_real != os.path.realpath(hooks_dir) and not args.force:
         raise ChwriteError(
-            "--deny-user/--deny-group require a <path> (ad hoc lock); scope for policy-driven "
-            "files comes from the policy file's own deny-user=/deny-group= rules instead "
-            "(SPEC.md section 29)",
+            f"core.hooksPath is already set to '{current}'.\n"
+            f"chwrite will not silently overwrite it. Re-run 'chwrite-setup install --force' to "
+            f"point it at {hooks_dir} instead, or configure it manually.",
             2,
         )
+    subprocess.run(["git", "config", "--global", "core.hooksPath", hooks_dir], check=True)
 
-    _, report = reconcile(root, state, hard_all=args.hard)
-    save_state(root, state)
-    exit_code = 0
-    if not report:
-        print("nothing to do (already up to date)")
-    for event in report:
-        if event.kind in ("locked", "relocked"):
-            print(f"{event.kind} {event.rel}  [{event.level}]")
-            if args.hard and event.level != "HARD":
-                exit_code = 1
-        elif event.kind == "removed":
-            print(f"unprotected {event.rel}  (no longer in policy)")
-    return exit_code
+    print(f"installed global git hooks to {hooks_dir}")
+    print("core.hooksPath configured")
 
-
-def cmd_unlock(args: _UnlockArgs) -> int:
-    """Unlock a single protected file, or every protected file (--all)."""
-    root = repo_root()
-    state = load_state(root)
-    files = state["files"]
-
-    if args.all:
-        count = 0
-        for rel, entry in files.items():
-            if entry.get("locked"):
-                full = os.path.join(root, rel)
-                if os.path.exists(full):
-                    unprotect_path(full, entry)
-                entry["locked"] = False
-                count += 1
-        save_state(root, state)
-        print(f"unlocked {count} file(s)")
-        return 0
-
-    if not args.path:
-        raise ChwriteError("unlock requires a <path> or --all", 2)
-    rel = normalize_local_arg_path(args.path, root)
-    entry = files.get(rel)
-    if not entry or not entry.get("locked"):
-        print(f"{rel} is not currently locked")
-        return 0
-    full = os.path.join(root, rel)
-    if os.path.exists(full):
-        unprotect_path(full, entry)
-    entry["locked"] = False
-    save_state(root, state)
-    print(f"unlocked {rel}")
+    if args.claude_hook:
+        install_claude_hook(os.getcwd())
     return 0
 
 
-def _reprotect_entry(full: str, entry: FileEntry) -> None:
-    """Reapply whatever protect_path()/protect_path_scoped() previously
-    applied to `entry`, using its own recorded scope (SPEC.md 16, 29).
-    Mutates `entry` in place with the (possibly refreshed) backend/level.
-    """
-    scope = entry.get("scope", "all")
-    if scope != "all":
-        result = protect_path_scoped(full, scope.get("deny_user", []), scope.get("deny_group", []))
-    else:
-        result = protect_path(full, hard=entry.get("hard", False))
-    entry["backend"] = result["backend"]
-    entry["level"] = result["level"]
-    if "acl_user" in result:
-        entry["acl_user"] = result["acl_user"]
-    if "acl_entries" in result:
-        entry["acl_entries"] = result["acl_entries"]
+def cmd_uninstall(_args: argparse.Namespace) -> int:
+    """Remove the global chwrite install/hooks and unlock the current repo."""
+    cfg_dir = config_dir()
+    hooks_dir = os.path.join(cfg_dir, "hooks")
 
-
-def cmd_unlocked(args: _UnlockedArgs) -> int:
-    """Unlock, run a command, then reapply protection (SPEC.md section 16)."""
-    command = args.command
-    if command and command[0] == "--":
-        command = command[1:]
-    if not command:
-        raise ChwriteError("usage: chwrite unlocked -- <command> [args...]", 2)
-
-    root = repo_root()
-    state = load_state(root)
-    files = state["files"]
-    locked_paths = [rel for rel, e in files.items() if e.get("locked")]
-    for rel in locked_paths:
-        entry = files[rel]
-        full = os.path.join(root, rel)
-        if os.path.exists(full):
-            unprotect_path(full, entry)
-        entry["locked"] = False
-    save_state(root, state)
+    proc = subprocess.run(
+        ["git", "config", "--global", "--get", "core.hooksPath"], capture_output=True, check=False
+    )
+    current = proc.stdout.decode(errors="replace").strip() if proc.returncode == 0 else None
+    if current and os.path.realpath(current) == os.path.realpath(hooks_dir):
+        subprocess.run(["git", "config", "--global", "--unset", "core.hooksPath"], check=False)
+        print("removed core.hooksPath")
+    elif current:
+        print(f"core.hooksPath points elsewhere ({current}); leaving it alone")
 
     try:
-        proc = subprocess.run(command, check=False)
-        code = proc.returncode
-    finally:
+        root = repo_root()
+    except ChwriteError:
+        root = None
+    if root:
         state = load_state(root)
         files = state["files"]
-        for rel in locked_paths:
-            entry = files.get(rel)
-            if entry is None:
-                continue
-            full = os.path.join(root, rel)
-            if os.path.exists(full):
-                if check_symlink_safety(full, root):
-                    _reprotect_entry(full, entry)
-                else:
-                    sys.stderr.write(
-                        f"warning: refusing to reprotect symlink outside repo root: {rel}\n"
-                    )
-            entry["locked"] = True
-        save_state(root, state)
+        count = 0
+        for _rel, entry in files.items():
+            if entry.get("locked"):
+                full = os.path.join(root, _rel)
+                if os.path.exists(full):
+                    unprotect_path(full, entry)
+                count += 1
+        if count:
+            print(f"unlocked {count} file(s) in {root}")
+        state_dir, _ = state_paths(root)
+        if os.path.isdir(state_dir):
+            shutil.rmtree(state_dir)
 
-    return code
+    if os.path.isdir(cfg_dir):
+        shutil.rmtree(cfg_dir)
+        print(f"removed {cfg_dir}")
+    return 0
 
+
+# --- setup_cli.py ------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
-    """Construct the top-level argparse parser and all subcommands."""
+    """Construct the chwrite-setup argparse parser."""
     p = argparse.ArgumentParser(
-        prog="chwrite", description="Protect files in a Git repo from unwanted modification."
+        prog="chwrite-setup",
+        description="One-time setup: install/uninstall chwrite's global git hooks.",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sp = sub.add_parser("init", help="create a chwrite policy file")
-    sp.add_argument("--format", choices=["plain", "json", "toml", "yaml"], default="plain")
-    sp.set_defaults(func=cmd_init)
-
-    sp = sub.add_parser("add", help="add a protect rule to the policy file")
-    sp.add_argument("pathspec")
-    sp.add_argument("--message", default=None)
-    sp.set_defaults(func=cmd_add)
-
-    sp = sub.add_parser("remove", help="remove a protect rule from the policy file")
-    sp.add_argument("pathspec")
-    sp.set_defaults(func=cmd_remove)
-
-    sp = sub.add_parser(
-        "apply", help="(re)apply protection according to the policy file (idempotent)"
-    )
-    sp.add_argument("--quiet", action="store_true")
-    sp.set_defaults(func=cmd_apply)
-
-    sp = sub.add_parser("lock", help="lock all protected files, or ad hoc lock a single path")
-    sp.add_argument("path", nargs="?", default=None)
-    sp.add_argument("--hard", action="store_true")
-    sp.add_argument("--message", default=None)
+    sp = sub.add_parser("install", help="install chwrite's global git hooks for this user")
+    sp.add_argument("--force", action="store_true", help="overwrite an existing core.hooksPath")
     sp.add_argument(
-        "--deny-user",
-        default=None,
-        help="ad hoc scoped lock: deny only this user (comma-separated)",
+        "--claude-hook", action="store_true", help="also add a project-scoped Claude Code hook here"
     )
-    sp.add_argument(
-        "--deny-group",
-        default=None,
-        help="ad hoc scoped lock: deny only this group (comma-separated)",
-    )
-    sp.set_defaults(func=cmd_lock)
+    sp.set_defaults(func=cmd_install)
 
-    sp = sub.add_parser("unlock", help="unlock a protected file")
-    sp.add_argument("path", nargs="?", default=None)
-    sp.add_argument("--all", action="store_true")
-    sp.set_defaults(func=cmd_unlock)
-
-    sp = sub.add_parser(
-        "unlocked", help="unlock, run a command, then reapply protection regardless of exit status"
-    )
-    sp.add_argument("command", nargs=argparse.REMAINDER)
-    sp.set_defaults(func=cmd_unlocked)
-
-    sp = sub.add_parser("status", help="show current protection state (inspects real OS state)")
-    sp.set_defaults(func=cmd_status)
-
-    sp = sub.add_parser(
-        "verify", help="check protected files for modification/deletion/flag removal"
-    )
-    sp.add_argument("--quiet", action="store_true")
-    sp.set_defaults(func=cmd_verify)
-
-    sp = sub.add_parser("check-path", help="fast check whether a path is protected")
-    sp.add_argument("path", nargs="?", default=None)
-    sp.add_argument(
-        "--claude-hook",
-        action="store_true",
-        help="read a Claude Code PreToolUse payload from stdin",
-    )
-    sp.set_defaults(func=cmd_check_path)
-
-    sp = sub.add_parser("doctor", help="diagnose chwrite installation/backend health")
-    sp.set_defaults(func=cmd_doctor)
+    sp = sub.add_parser("uninstall", help="remove the global chwrite install and hooks")
+    sp.set_defaults(func=cmd_uninstall)
 
     return p
 
@@ -2557,7 +2000,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(func(args))
     except ChwriteError as e:
-        sys.stderr.write(f"chwrite: {e}\n")
+        sys.stderr.write(f"chwrite-setup: {e}\n")
         return e.code
     except KeyboardInterrupt:
         return 130

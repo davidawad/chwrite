@@ -28,7 +28,7 @@ build-check:
     trap 'rm -f "$tmp"' EXIT
     python3 scripts/bundle.py
     cp chwrite.py "$tmp"
-    git diff --quiet -- chwrite.py || { echo "chwrite.py is out of date; run 'just build' and commit it"; exit 1; }
+    git diff --quiet -- chwrite.py chwrite-setup.py || { echo "chwrite.py/chwrite-setup.py are out of date; run 'just build' and commit it"; exit 1; }
 
 audit:
     uv run pip-audit

@@ -1,6 +1,7 @@
 """init/add/remove/apply/lock/unlock/unlocked subcommands + argparse wiring
 (SPEC.md 21, 24, 25, 28, 29). status/verify/doctor live in diagnostics.py -
-see that module's docstring for why."""
+see that module's docstring for why. install/uninstall live in the separate
+chwrite-setup binary (setup_cli.py) - see SPEC.md section 32 for why."""
 
 from __future__ import annotations
 
@@ -20,7 +21,6 @@ from chwrite.gitutil import (
     repo_root,
     validate_pathspec,
 )
-from chwrite.hooks import cmd_install, cmd_uninstall
 from chwrite.policy import (
     ADHOC_DEFAULT_MESSAGE,
     POLICY_WRITERS,
@@ -426,16 +426,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="read a Claude Code PreToolUse payload from stdin",
     )
     sp.set_defaults(func=cmd_check_path)
-
-    sp = sub.add_parser("install", help="install chwrite globally for this user")
-    sp.add_argument("--force", action="store_true", help="overwrite an existing core.hooksPath")
-    sp.add_argument(
-        "--claude-hook", action="store_true", help="also add a project-scoped Claude Code hook here"
-    )
-    sp.set_defaults(func=cmd_install)
-
-    sp = sub.add_parser("uninstall", help="remove the global chwrite install and hooks")
-    sp.set_defaults(func=cmd_uninstall)
 
     sp = sub.add_parser("doctor", help="diagnose chwrite installation/backend health")
     sp.set_defaults(func=cmd_doctor)

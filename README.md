@@ -12,17 +12,28 @@ full design and threat model (section 3, "Non-goal / Security Boundary").
 
 ## Install
 
+chwrite is two small binaries, not one (see SPEC.md section 32 for the full
+rationale): `chwrite` is the hot path (everything that operates on the
+current repo — apply/lock/unlock/status/verify/etc.); `chwrite-setup` is a
+separate, one-time-per-machine binary (install/uninstall — the only two
+commands that touch anything outside the current repo). `chwrite` never
+imports or runs any install/uninstall code, and vice versa.
+
 ```bash
 git clone <this-repo>
 cd chwrite
-python3 chwrite.py install
+python3 chwrite-setup.py install
 ```
 
-`install` copies chwrite into your user config directory
-(`~/.config/chwrite` on macOS/Linux, `%APPDATA%\chwrite` on Windows),
-installs a global Git hook dispatcher, and points Git at it via
-`core.hooksPath`. No root/admin privileges required. It will refuse to
-overwrite an existing `core.hooksPath` without explicit permission.
+`chwrite-setup install` installs a global Git hook dispatcher and points Git
+at it via `core.hooksPath`. No root/admin privileges required. It will
+refuse to overwrite an existing `core.hooksPath` without explicit
+permission. If a real `chwrite` is already on your PATH (pip/pipx/Homebrew/
+npm/AUR/apt install — see "Distribution" below), the generated hooks call
+that directly; otherwise it copies the sibling `chwrite.py` into your user
+config directory (`~/.config/chwrite` on macOS/Linux, `%APPDATA%\chwrite`
+on Windows) so hooks keep working even if you later delete the original
+downloaded copy.
 
 After install, the `chwrite` / `chwrite.cmd` launchers in this repo (and
 `chwrite status`, once installed globally) work from any directory.
@@ -176,12 +187,17 @@ chwrite check-path <path>     fast scriptable check for external tools/hooks;
                                exit 0 unprotected, 1 protected (message on
                                stderr), 2 config/runtime error
 chwrite doctor                diagnose install/backend/hook health
+```
 
-chwrite install                 one-time per-user install + global Git hooks
-chwrite install --claude-hook   add a repo-committed Claude Code PreToolUse
-                                 hook that runs `chwrite check-path`, additive
-                                 to any existing .claude/settings.json hooks
-chwrite uninstall                remove hooks and restore original file state
+`chwrite-setup` (separate binary, section "Install" above — one-time per
+machine, never invoked by `chwrite` itself or its generated git hooks):
+
+```text
+chwrite-setup install                 one-time per-user install + global Git hooks
+chwrite-setup install --claude-hook   add a repo-committed Claude Code PreToolUse
+                                       hook that runs `chwrite check-path`, additive
+                                       to any existing .claude/settings.json hooks
+chwrite-setup uninstall               remove hooks and restore original file state
 ```
 
 Running `chwrite apply` any number of times produces the same result as
@@ -222,7 +238,7 @@ re-inspects real OS state rather than trusting that file.
   modifying — a protected repo cloned somewhere without chwrite installed
   gets zero enforcement (`.chwrite` is just inert data to Git and any tool
   that doesn't understand it).
-* The `chwrite install --claude-hook` PreToolUse hook is not itself a
+* The `chwrite-setup install --claude-hook` PreToolUse hook is not itself a
   security boundary — it's a legible pre-write explanation layered on top.
   OS-level enforcement (the levels above) is what actually stops the write;
   anything that isn't Claude Code invoking `Edit`/`Write`/etc. never touches
@@ -232,11 +248,16 @@ Full threat model and rationale: [`SPEC.md`](./SPEC.md) section 3.
 
 ## Distribution
 
-Single file, standard library only: [`chwrite.py`](./chwrite.py). Optional
-launchers in this repo: [`chwrite`](./chwrite) (POSIX shell shim) and
-[`chwrite.cmd`](./chwrite.cmd) (Windows). Both just locate `chwrite.py` and
-exec/invoke Python on it, passing args and exit code through unchanged — no
-logic lives in the launchers.
+Two single files, standard library only: [`chwrite.py`](./chwrite.py) (hot
+path) and [`chwrite-setup.py`](./chwrite-setup.py) (one-time setup — see
+"Install" above). Optional launchers in this repo, one pair per binary:
+[`chwrite`](./chwrite)/[`chwrite.cmd`](./chwrite.cmd) and
+[`chwrite-setup`](./chwrite-setup)/[`chwrite-setup.cmd`](./chwrite-setup.cmd).
+Every launcher just locates its matching `.py` file and exec/invokes Python
+on it, passing args and exit code through unchanged — no logic lives in any
+launcher. Also installable via pip/pipx/Homebrew/npm/AUR/apt — see
+[`packaging/README.md`](./packaging/README.md) for what's live vs.
+wired-but-pending on each.
 
 ## Development
 

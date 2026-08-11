@@ -7,6 +7,7 @@ dependencies = []
 
 [project.scripts]
 chwrite = "chwrite.cli:main"
+chwrite-setup = "chwrite.setup_cli:main"
 
 [dependency-groups]
 dev = [
@@ -19,9 +20,10 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-# chwrite.py is a machine-generated bundle (scripts/bundle.py) - gates apply
-# to src/, never to the generated artifact (SPEC.md section 26).
-extend-exclude = ["chwrite.py"]
+# chwrite.py / chwrite-setup.py are machine-generated bundles
+# (scripts/bundle.py) - gates apply to src/, never to the generated
+# artifacts (SPEC.md sections 26, 32).
+extend-exclude = ["chwrite.py", "chwrite-setup.py"]
 
 [tool.ruff.lint]
 select = [

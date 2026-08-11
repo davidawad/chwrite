@@ -6,6 +6,15 @@ external, human-only, one-time setup step (account, tap/repo creation,
 credential) it depends on has actually been completed — not merely once the
 packaging files exist in this repo and pass local validation.
 
+**Two binaries, not one** (SPEC.md section 32): `chwrite` (hot path) and
+`chwrite-setup` (one-time install/uninstall, separate so the everyday binary
+never carries any code that touches global git config or your home
+directory). Every packaging surface below ships **both** — this changed
+after the surfaces were first built, so if a surface's own notes below still
+talk about "the binary" singular, treat that as the pre-section-32 state and
+the table's Status column as the source of truth for what's actually
+up to date.
+
 | Surface   | Files                  | Status | Blocking one-time step(s) |
 |-----------|-------------------------|--------|----------------------------|
 | pip / pipx | `pyproject.toml` (`[project.scripts]`) | Wired, not live | PyPI project + Trusted Publisher link (one-time, PyPI account holder only) |

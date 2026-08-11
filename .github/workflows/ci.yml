@@ -35,12 +35,12 @@ jobs:
       - name: pytest (coverage floor 85%, SPEC.md section 27)
         run: uv run pytest tests/ --cov=src/chwrite --cov-fail-under=85 -q
 
-      - name: chwrite.py bundle is not stale (SPEC.md section 26.1)
+      - name: chwrite.py / chwrite-setup.py bundles are not stale (SPEC.md 26.1, 32.1)
         run: |
           python3 scripts/bundle.py
-          git diff --quiet -- chwrite.py || {
-            echo "chwrite.py is out of date relative to src/chwrite/; run 'just build' and commit it" >&2
-            git diff -- chwrite.py
+          git diff --quiet -- chwrite.py chwrite-setup.py || {
+            echo "chwrite.py/chwrite-setup.py are out of date relative to src/chwrite/; run 'just build' and commit it" >&2
+            git diff -- chwrite.py chwrite-setup.py
             exit 1
           }
 

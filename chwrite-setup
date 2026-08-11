@@ -1,0 +1,41 @@
+#!/bin/sh
+# chwrite-setup - POSIX shell shim (SPEC.md section 32)
+#
+# Locates the real chwrite-setup.py implementation and execs python3 on it,
+# passing through all arguments and propagating the exit code.
+#
+# Resolution order:
+#   1. ~/.config/chwrite/chwrite-setup.py  (rare - chwrite-setup itself is
+#      never installed by `chwrite-setup install`, only chwrite.py is;
+#      this path exists only for symmetry with the chwrite shim)
+#   2. chwrite-setup.py next to this script (running from a repo checkout,
+#      or wherever a package manager placed it - SPEC.md section 31)
+set -eu
+
+INSTALLED="${HOME:-}/.config/chwrite/chwrite-setup.py"
+
+# Resolve the directory this script lives in, following symlinks.
+SELF="$0"
+while [ -L "$SELF" ]; do
+    LINK="$(readlink "$SELF")"
+    case "$LINK" in
+        /*) SELF="$LINK" ;;
+        *) SELF="$(dirname "$SELF")/$LINK" ;;
+    esac
+done
+SELF_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+LOCAL="$SELF_DIR/chwrite-setup.py"
+
+if [ -f "$INSTALLED" ]; then
+    TARGET="$INSTALLED"
+elif [ -f "$LOCAL" ]; then
+    TARGET="$LOCAL"
+else
+    echo "chwrite-setup: could not find chwrite-setup.py (looked in $INSTALLED and $LOCAL)" >&2
+    exit 2
+fi
+
+PYTHON="python3"
+command -v python3 >/dev/null 2>&1 || PYTHON="python"
+
+exec "$PYTHON" "$TARGET" "$@"

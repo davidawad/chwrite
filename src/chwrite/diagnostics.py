@@ -18,9 +18,9 @@ from dataclasses import dataclass
 
 from chwrite.backends import PLATFORM, query_path
 from chwrite.backends.linux import linux_acl_capability
+from chwrite.config_paths import config_dir
 from chwrite.errors import ChwriteError
 from chwrite.gitutil import repo_root, run_git
-from chwrite.hooks import config_dir
 from chwrite.policy import find_policy_file, load_policy
 from chwrite.state import StateDoc, load_state
 

@@ -64,44 +64,26 @@ def isolated_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     return cfg_home / "chwrite"
 
 
+@pytest.fixture
+def fake_chwrite_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Makes _find_chwrite_py() (SPEC.md 32.2) deterministically resolve to
+    a fake sibling chwrite.py under tmp_path, never a real `chwrite` on this
+    test-running machine's PATH - matches the old self-referential-copy
+    behavior these tests were written against: is_on_path=False, dest_py
+    ends up under isolated_config_dir."""
+    monkeypatch.setattr(hooks.shutil, "which", lambda _name: None)
+    fake_source = tmp_path / "source" / "chwrite.py"
+    fake_source.parent.mkdir(parents=True, exist_ok=True)
+    fake_source.write_text("#!/usr/bin/env python3\n# fake chwrite.py for tests\n")
+    monkeypatch.setattr(hooks, "_find_chwrite_py", lambda: (str(fake_source), False))
+    return fake_source
+
+
 def _init_repo(tmp_path: Path) -> str:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, check=True)
     return str(tmp_path)
-
-
-# ---------------------------------------------------------------------------
-# config_dir
-# ---------------------------------------------------------------------------
-
-
-def test_config_dir_uses_xdg_config_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    assert hooks.config_dir() == str(tmp_path / "xdg" / "chwrite")
-
-
-def test_config_dir_falls_back_to_home_config(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-    monkeypatch.setattr("os.path.expanduser", lambda p: str(tmp_path))
-    assert hooks.config_dir() == str(tmp_path / ".config" / "chwrite")
-
-
-def test_config_dir_windows_uses_appdata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(hooks, "PLATFORM", "windows")
-    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
-    assert hooks.config_dir() == str(tmp_path / "AppData" / "Roaming" / "chwrite")
-
-
-def test_config_dir_windows_errors_without_appdata(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(hooks, "PLATFORM", "windows")
-    monkeypatch.delenv("APPDATA", raising=False)
-    with pytest.raises(ChwriteError):
-        hooks.config_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -127,12 +109,70 @@ def test_hook_script_pre_push_runs_verify() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _find_chwrite_py (SPEC.md 32.2)
+# ---------------------------------------------------------------------------
+
+
+def test_find_chwrite_py_prefers_path_over_sibling_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(hooks.shutil, "which", lambda name: "/usr/local/bin/chwrite")
+    sibling = tmp_path / "chwrite.py"
+    sibling.write_text("# unused - PATH takes precedence")
+    monkeypatch.setattr(hooks.os.path, "realpath", lambda _p: str(tmp_path / "hooks.py"))
+    ref, is_on_path = hooks._find_chwrite_py()
+    assert ref == "/usr/local/bin/chwrite"
+    assert is_on_path is True
+
+
+def test_find_chwrite_py_falls_back_to_sibling_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(hooks.shutil, "which", lambda name: None)
+    sibling = tmp_path / "chwrite.py"
+    sibling.write_text("# fake")
+    monkeypatch.setattr(hooks.os.path, "realpath", lambda _p: str(tmp_path / "hooks.py"))
+    ref, is_on_path = hooks._find_chwrite_py()
+    assert ref == str(sibling)
+    assert is_on_path is False
+
+
+def test_find_chwrite_py_raises_when_neither_found(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(hooks.shutil, "which", lambda name: None)
+    monkeypatch.setattr(hooks.os.path, "realpath", lambda _p: str(tmp_path / "hooks.py"))
+    with pytest.raises(ChwriteError) as exc_info:
+        hooks._find_chwrite_py()
+    assert exc_info.value.code == 2
+    assert "no 'chwrite' on PATH" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
 # cmd_install
 # ---------------------------------------------------------------------------
 
 
-def test_cmd_install_writes_hooks_and_configures_git(
+def test_cmd_install_uses_chwrite_already_on_path(
     monkeypatch: pytest.MonkeyPatch, isolated_config_dir: Path
+) -> None:
+    fake = FakeGitConfig(initial=None)
+    monkeypatch.setattr(hooks.subprocess, "run", fake.run)
+    monkeypatch.setattr(hooks, "_find_chwrite_py", lambda: ("/usr/local/bin/chwrite", True))
+
+    code = hooks.cmd_install(Namespace(force=False, claude_hook=False))
+    assert code == 0
+
+    # No copy made into the config dir when chwrite is already on PATH.
+    assert not (isolated_config_dir / "chwrite.py").exists()
+    for name in hooks.HOOK_NAMES:
+        hook_path = isolated_config_dir / "hooks" / name
+        assert hook_path.is_file()
+        assert "exec chwrite " in hook_path.read_text()
+
+
+def test_cmd_install_writes_hooks_and_configures_git(
+    monkeypatch: pytest.MonkeyPatch, isolated_config_dir: Path, fake_chwrite_source: Path
 ) -> None:
     fake = FakeGitConfig(initial=None)
     monkeypatch.setattr(hooks.subprocess, "run", fake.run)
@@ -152,7 +192,7 @@ def test_cmd_install_writes_hooks_and_configures_git(
 
 
 def test_cmd_install_refuses_to_overwrite_existing_hooks_path(
-    monkeypatch: pytest.MonkeyPatch, isolated_config_dir: Path
+    monkeypatch: pytest.MonkeyPatch, isolated_config_dir: Path, fake_chwrite_source: Path
 ) -> None:
     fake = FakeGitConfig(initial="/some/other/hooks/dir")
     monkeypatch.setattr(hooks.subprocess, "run", fake.run)
@@ -164,7 +204,7 @@ def test_cmd_install_refuses_to_overwrite_existing_hooks_path(
 
 
 def test_cmd_install_force_overwrites_existing_hooks_path(
-    monkeypatch: pytest.MonkeyPatch, isolated_config_dir: Path
+    monkeypatch: pytest.MonkeyPatch, isolated_config_dir: Path, fake_chwrite_source: Path
 ) -> None:
     fake = FakeGitConfig(initial="/some/other/hooks/dir")
     monkeypatch.setattr(hooks.subprocess, "run", fake.run)
@@ -175,7 +215,7 @@ def test_cmd_install_force_overwrites_existing_hooks_path(
 
 
 def test_cmd_install_idempotent_when_hooks_path_already_correct(
-    monkeypatch: pytest.MonkeyPatch, isolated_config_dir: Path
+    monkeypatch: pytest.MonkeyPatch, isolated_config_dir: Path, fake_chwrite_source: Path
 ) -> None:
     fake = FakeGitConfig(initial=str(isolated_config_dir / "hooks"))
     monkeypatch.setattr(hooks.subprocess, "run", fake.run)
@@ -185,7 +225,10 @@ def test_cmd_install_idempotent_when_hooks_path_already_correct(
 
 
 def test_cmd_install_with_claude_hook_writes_settings_json(
-    monkeypatch: pytest.MonkeyPatch, isolated_config_dir: Path, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_config_dir: Path,
+    tmp_path: Path,
+    fake_chwrite_source: Path,
 ) -> None:
     fake = FakeGitConfig(initial=None)
     monkeypatch.setattr(hooks.subprocess, "run", fake.run)
@@ -204,7 +247,10 @@ def test_cmd_install_with_claude_hook_writes_settings_json(
 
 
 def test_cmd_uninstall_removes_matching_hooks_path(
-    monkeypatch: pytest.MonkeyPatch, isolated_config_dir: Path, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_config_dir: Path,
+    tmp_path: Path,
+    fake_chwrite_source: Path,
 ) -> None:
     fake = FakeGitConfig(initial=None)
     monkeypatch.setattr(hooks.subprocess, "run", fake.run)
@@ -275,7 +321,10 @@ def test_cmd_uninstall_unlocks_locked_files_in_current_repo(
 
 
 def test_cmd_uninstall_outside_any_repo_still_removes_config_dir(
-    monkeypatch: pytest.MonkeyPatch, isolated_config_dir: Path, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_config_dir: Path,
+    tmp_path: Path,
+    fake_chwrite_source: Path,
 ) -> None:
     fake = FakeGitConfig(initial=None)
     monkeypatch.setattr(hooks.subprocess, "run", fake.run)

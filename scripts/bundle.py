@@ -19,11 +19,14 @@ import tomllib
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = REPO_ROOT / "src" / "chwrite"
-OUTPUT = REPO_ROOT / "chwrite.py"
 
-# Fixed dependency order: each module here only imports from modules
-# earlier in this list (verified by hand; there are no import cycles).
-MODULE_ORDER = [
+# Two binaries, two disjoint module sets (SPEC.md section 32.1). Each list
+# is a fixed dependency order: every module only imports from modules
+# earlier in ITS list (verified by hand; there are no import cycles).
+# hooks.py/setup_cli.py are exclusive to chwrite-setup - nothing in the
+# hot-path chwrite binary ever touches global git config or the user's
+# home directory.
+CHWRITE_MODULES = [
     "errors.py",
     "gitutil.py",
     "policy_yaml.py",
@@ -37,9 +40,27 @@ MODULE_ORDER = [
     "backends/__init__.py",
     "reconcile.py",
     "claude_hook.py",
-    "hooks.py",
+    "config_paths.py",
     "diagnostics.py",
     "cli.py",
+]
+
+CHWRITE_SETUP_MODULES = [
+    "errors.py",
+    "gitutil.py",
+    "policy_yaml.py",
+    "policy.py",
+    "state.py",
+    "backends/posix_generic.py",
+    "backends/macos.py",
+    "backends/linux.py",
+    "backends/windows.py",
+    "backends/unknown.py",
+    "backends/__init__.py",
+    "claude_hook.py",
+    "config_paths.py",
+    "hooks.py",
+    "setup_cli.py",
 ]
 
 FUTURE_IMPORT = "from __future__ import annotations"
@@ -110,11 +131,11 @@ def _project_version() -> str:
         return tomllib.load(f)["project"]["version"]
 
 
-def build() -> str:
-    """Render the full bundled chwrite.py source as a string."""
+def build(name: str, module_order: list[str]) -> str:
+    """Render one bundle's full source as a string."""
     all_hoisted: list[str] = []
     sections: list[str] = []
-    for rel_path in MODULE_ORDER:
+    for rel_path in module_order:
         body, hoisted = _read_module(rel_path)
         for line in hoisted:
             if line not in all_hoisted:
@@ -125,11 +146,12 @@ def build() -> str:
 
     header = (
         "#!/usr/bin/env python3\n"
-        '"""chwrite - GENERATED, do not hand-edit.\n\n'
+        f'"""{name} - GENERATED, do not hand-edit.\n\n'
         "Regenerate with `just build` (or `python3 scripts/bundle.py`) after\n"
-        "changing anything under src/chwrite/. This is the single-file,\n"
-        "stdlib-only distributable artifact described in SPEC.md section 19;\n"
-        "section 26 explains why the maintained source is a package instead.\n\n"
+        "changing anything under src/chwrite/. This is one of the two\n"
+        "single-file, stdlib-only distributable artifacts described in\n"
+        "SPEC.md sections 19/32; section 26 explains why the maintained\n"
+        "source is a package instead.\n\n"
         f"Generated from src/chwrite/ (chwrite {_project_version()}).\n"
         '"""\n\n'
         f"{FUTURE_IMPORT}\n\n"
@@ -140,19 +162,23 @@ def build() -> str:
     return header + imports_block + body_block + footer
 
 
-def main() -> int:
-    content = build()
-    OUTPUT.write_text(content, encoding="utf-8", newline="\n")
+def _write(output: pathlib.Path, content: str) -> None:
+    output.write_text(content, encoding="utf-8", newline="\n")
     try:
-        OUTPUT.chmod(0o755)
+        output.chmod(0o755)
     except PermissionError:
         # Not our file to chmod (e.g. it's owned by a different user on a
         # shared checkout - common when multiple agents/users build from
         # the same working tree). The content is still written correctly;
         # losing the executable bit here is a non-fatal cosmetic issue,
         # not a reason to fail the build.
-        print(f"note: could not chmod {OUTPUT} (owned by another user?); leaving permissions as-is")
-    print(f"wrote {OUTPUT} ({content.count(chr(10)) + 1} lines)")
+        print(f"note: could not chmod {output} (owned by another user?); leaving permissions as-is")
+    print(f"wrote {output} ({content.count(chr(10)) + 1} lines)")
+
+
+def main() -> int:
+    _write(REPO_ROOT / "chwrite.py", build("chwrite", CHWRITE_MODULES))
+    _write(REPO_ROOT / "chwrite-setup.py", build("chwrite-setup", CHWRITE_SETUP_MODULES))
     return 0
 
 
