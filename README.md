@@ -12,6 +12,10 @@ full design and threat model (section 3, "Non-goal / Security Boundary").
 
 ## Install
 
+See [`INSTALL.md`](./INSTALL.md) for every install method (pip/npm/Homebrew/
+AUR/apt/winget) and their real current status — only git clone actually
+works end-to-end today; the rest are built and tested but not yet published.
+
 chwrite is two small binaries, not one (see SPEC.md section 32 for the full
 rationale): `chwrite` is the hot path (everything that operates on the
 current repo — apply/lock/unlock/status/verify/etc.); `chwrite-setup` is a
