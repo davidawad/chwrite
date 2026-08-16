@@ -1,6 +1,15 @@
 {
   "enabledPlugins": {
     "swe-project-plugin-pack-python@awad-marketplace": true,
-    "swe-project-plugin-pack-shell@awad-marketplace": true
+    "swe-project-plugin-pack-shell@awad-marketplace": true,
+    "compound-engineering@compound-engineering-plugin": true
+  },
+  "extraKnownMarketplaces": {
+    "compound-engineering-plugin": {
+      "source": {
+        "source": "github",
+        "repo": "EveryInc/compound-engineering-plugin"
+      }
+    }
   }
 }
