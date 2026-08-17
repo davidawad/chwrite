@@ -1,13 +1,18 @@
 """Tests for chwrite.gitutil path-safety helpers and git process wrapping
-(SPEC.md 5, 18, 27)."""
+(SPEC.md 5, 18, 27, 33)."""
 
 from __future__ import annotations
+
+import subprocess
+from pathlib import Path
 
 import pytest
 
 from chwrite import gitutil
 from chwrite.errors import ChwriteError
 from chwrite.gitutil import (
+    branch_matches,
+    current_branch,
     pathspec_matches,
     repo_root,
     resolve_target_path,
@@ -131,3 +136,71 @@ def test_resolve_target_path_outside_repo_returns_none(tmp_path) -> None:
     outside = tmp_path / "outside.txt"
     outside.write_text("x")
     assert resolve_target_path(str(outside), "/definitely/not/" + str(tmp_path)) is None
+
+
+# ---------------------------------------------------------------------------
+# current_branch() / branch_matches() (SPEC.md section 33)
+# ---------------------------------------------------------------------------
+
+
+def test_current_branch_returns_branch_name(repo: str) -> None:
+    # `repo` (conftest.py) is a freshly `git init`'d repo - no commit yet,
+    # but symbolic-ref still resolves the pending branch name even on an
+    # unborn HEAD (only a genuinely *detached* HEAD makes it fail).
+    name = current_branch(repo)
+    assert name is not None
+    assert name  # non-empty
+
+
+def test_current_branch_none_on_detached_head(repo: str) -> None:
+    (Path(repo) / "a.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "c"], cwd=repo, check=True)
+    sha = (
+        subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True)
+        .stdout.decode()
+        .strip()
+    )
+    subprocess.run(["git", "checkout", "-q", sha], cwd=repo, check=True)
+
+    assert current_branch(repo) is None
+
+
+def test_current_branch_per_worktree(repo: str, tmp_path) -> None:
+    (Path(repo) / "a.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "c"], cwd=repo, check=True)
+    subprocess.run(["git", "branch", "other-branch"], cwd=repo, check=True)
+
+    wt_dir = tmp_path / "wt"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", str(wt_dir), "other-branch"], cwd=repo, check=True
+    )
+
+    main_branch = current_branch(repo)
+    wt_branch = current_branch(str(wt_dir))
+    assert wt_branch == "other-branch"
+    assert main_branch != wt_branch
+
+
+@pytest.mark.parametrize(
+    ("branch", "patterns", "expected"),
+    [
+        ("main", (), True),  # no branches= condition -> always matches
+        ("main", ("main",), True),
+        ("main", ("release/*",), False),
+        ("release/1.0", ("release/*",), True),
+        # fnmatch's `*` matches any character sequence including `/` (it is
+        # not a path-aware glob) - `release/*` matches nested branch names
+        # like `release/1.0/hotfix` too, same as gitconfig includeIf
+        # onbranch's own fnmatch-based matching.
+        ("release/1.0/hotfix", ("release/*",), True),
+        ("releaseX", ("release/*",), False),
+        ("main", ("dev", "main"), True),  # any-of
+        ("Main", ("main",), False),  # case-sensitive (fnmatchcase)
+        (None, ("main",), True),  # detached HEAD: conservative default, treated as matching
+        (None, (), True),
+    ],
+)
+def test_branch_matches(branch: str | None, patterns: tuple[str, ...], expected: bool) -> None:
+    assert branch_matches(branch, patterns) is expected
