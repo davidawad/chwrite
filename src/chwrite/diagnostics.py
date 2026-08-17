@@ -20,8 +20,8 @@ from chwrite.backends import PLATFORM, query_path
 from chwrite.backends.linux import linux_acl_capability
 from chwrite.config_paths import config_dir
 from chwrite.errors import ChwriteError
-from chwrite.gitutil import repo_root, run_git
-from chwrite.policy import find_policy_file, load_policy
+from chwrite.gitutil import branch_matches, current_branch, repo_root, run_git
+from chwrite.policy import Policy, find_policy_file, load_policy
 from chwrite.state import StateDoc, load_state
 
 LINUX_DENY_GROUP_CAVEAT = (
@@ -61,16 +61,56 @@ def _print_deny_group_caveat(state: StateDoc) -> None:
             print(f"  {rel}")
 
 
+def _branch_inactive_rules(
+    policy: Policy | None, branch: str | None
+) -> list[tuple[str, tuple[str, ...]]]:
+    """Branch-scoped rules (section 33) that don't match `branch`.
+
+    Returns [(pattern_or_regex_text, branches)] for status's "inactive on
+    this branch" note - a rule-level view, not a resolved-file view,
+    deliberately: it costs no extra `git ls-files`/`re.search` work beyond
+    what's already loaded, and "this rule doesn't apply here" is exactly
+    what a human needs to know when a file they expected to see protected
+    is missing from the LEVEL/BACKEND/FILE table above.
+    """
+    if policy is None:
+        return []
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for rule in policy.rules:
+        if rule.branches and not branch_matches(branch, rule.branches):
+            text = rule.pattern if rule.pattern is not None else rule.regex
+            assert text is not None
+            out.append((text, rule.branches))
+    return out
+
+
+def _print_branch_inactive_note(policy: Policy | None, branch: str | None) -> None:
+    """Report branch-scoped rules that don't apply here (SPEC.md 33.5) -
+    the "inactive on this branch" counterpart to the LEVEL/BACKEND/FILE
+    table above, which by construction only ever lists *active*
+    protection. Without this, a file missing from that table because its
+    rule's branches= condition doesn't match looks identical to a file
+    that was simply never protected at all."""
+    inactive = _branch_inactive_rules(policy, branch)
+    if inactive:
+        print()
+        print("INACTIVE ON THIS BRANCH (branches= condition not met):")
+        for text, branches in inactive:
+            print(f'  {text}  branches="{",".join(branches)}"')
+
+
 def cmd_status(_args: argparse.Namespace) -> int:
     """Show current protection state, inspecting real OS state (section 9)."""
     root = repo_root()
     policy = load_policy(root)
     state = load_state(root)
     files = state["files"]
+    branch = current_branch(root)
 
     print("chwrite v1")
     print()
     print(f"Policy: {policy.path if policy else '(none)'}")
+    print(f"Branch: {branch if branch is not None else '(detached HEAD)'}")
     print()
 
     rows: list[tuple[str, str, str]] = []
@@ -98,6 +138,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
     print(f"{violation_count} violations")
 
     _print_deny_group_caveat(state)
+    _print_branch_inactive_note(policy, branch)
 
     return 1 if violation_count else 0
 
@@ -189,9 +230,13 @@ def _doctor_print_repo_section() -> None:
         root = repo_root()
         print()
         print(f"Repository: {root}")
+        branch = current_branch(root)
+        print(f"Branch: {branch if branch is not None else '(detached HEAD)'}")
         filename = find_policy_file(root)
         print(f"Policy file: {filename if filename else '(none)'}")
+        policy = load_policy(root)
         _print_deny_group_caveat(load_state(root))
+        _print_branch_inactive_note(policy, branch)
     except ChwriteError as e:
         print()
         print(f"Not currently inside a git repository ({e})")

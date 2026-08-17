@@ -50,6 +50,51 @@ def repo_root() -> str:
     return os.path.realpath(top)
 
 
+def current_branch(root: str) -> str | None:
+    """Return the current branch's short name, or None on detached HEAD.
+
+    Uses `git symbolic-ref --short -q HEAD` rather than `git branch
+    --show-current` (same information, but symbolic-ref is the lower-level,
+    more universally-available plumbing command and its `-q` flag gives a
+    clean nonzero exit - no stderr noise to suppress - exactly on detached
+    HEAD, which is the one case this function must distinguish). This is
+    resolved per repository *working tree* (SPEC.md section 33.3): each
+    git worktree has its own HEAD, so two worktrees of the same repo on
+    different branches correctly get different answers here.
+    """
+    proc = run_git(["symbolic-ref", "--short", "-q", "HEAD"], cwd=root, check=False)
+    if proc.returncode != 0:
+        return None
+    name = proc.stdout.decode(errors="replace").strip()
+    return name or None
+
+
+def branch_matches(branch: str | None, patterns: tuple[str, ...]) -> bool:
+    """Whether `branch` satisfies a rule's `branches=` condition (SPEC.md 33).
+
+    `patterns` empty means the rule carries no branch condition at all -
+    always matches (this is what makes the feature fully backward
+    compatible with every rule written before it existed). Otherwise each
+    pattern is matched via `fnmatch.fnmatchcase` (case-sensitive on every
+    OS, same as pathspec_matches() below - git ref names are byte strings,
+    not filesystem paths, so there is no platform-casing question to defer
+    to here), same philosophy as gitconfig's `includeIf gitdir/onbranch`.
+
+    Detached HEAD (branch is None) is a deliberate conservative default:
+    a branch-scoped rule is treated as matching (protection stays ACTIVE)
+    rather than risk silently unprotecting a file just because the
+    checkout happens to be detached (e.g. mid-rebase, CI checking out a
+    tag/SHA). Erring toward "still protected" is recoverable with `chwrite
+    unlock`; erring toward "silently unprotected" is not something anyone
+    would notice in time.
+    """
+    if not patterns:
+        return True
+    if branch is None:
+        return True
+    return any(fnmatch.fnmatchcase(branch, pat) for pat in patterns)
+
+
 def try_repo_root() -> str | None:
     """Like repo_root(), but returns None instead of raising.
 

@@ -135,6 +135,7 @@ def cmd_add(args: _AddArgs) -> int:
                 r.regex,
                 r.deny_user,
                 r.deny_group,
+                r.branches,
             )
             break
     else:

@@ -89,6 +89,51 @@ def repo_root() -> str:
     return os.path.realpath(top)
 
 
+def current_branch(root: str) -> str | None:
+    """Return the current branch's short name, or None on detached HEAD.
+
+    Uses `git symbolic-ref --short -q HEAD` rather than `git branch
+    --show-current` (same information, but symbolic-ref is the lower-level,
+    more universally-available plumbing command and its `-q` flag gives a
+    clean nonzero exit - no stderr noise to suppress - exactly on detached
+    HEAD, which is the one case this function must distinguish). This is
+    resolved per repository *working tree* (SPEC.md section 33.3): each
+    git worktree has its own HEAD, so two worktrees of the same repo on
+    different branches correctly get different answers here.
+    """
+    proc = run_git(["symbolic-ref", "--short", "-q", "HEAD"], cwd=root, check=False)
+    if proc.returncode != 0:
+        return None
+    name = proc.stdout.decode(errors="replace").strip()
+    return name or None
+
+
+def branch_matches(branch: str | None, patterns: tuple[str, ...]) -> bool:
+    """Whether `branch` satisfies a rule's `branches=` condition (SPEC.md 33).
+
+    `patterns` empty means the rule carries no branch condition at all -
+    always matches (this is what makes the feature fully backward
+    compatible with every rule written before it existed). Otherwise each
+    pattern is matched via `fnmatch.fnmatchcase` (case-sensitive on every
+    OS, same as pathspec_matches() below - git ref names are byte strings,
+    not filesystem paths, so there is no platform-casing question to defer
+    to here), same philosophy as gitconfig's `includeIf gitdir/onbranch`.
+
+    Detached HEAD (branch is None) is a deliberate conservative default:
+    a branch-scoped rule is treated as matching (protection stays ACTIVE)
+    rather than risk silently unprotecting a file just because the
+    checkout happens to be detached (e.g. mid-rebase, CI checking out a
+    tag/SHA). Erring toward "still protected" is recoverable with `chwrite
+    unlock`; erring toward "silently unprotected" is not something anyone
+    would notice in time.
+    """
+    if not patterns:
+        return True
+    if branch is None:
+        return True
+    return any(fnmatch.fnmatchcase(branch, pat) for pat in patterns)
+
+
 def try_repo_root() -> str | None:
     """Like repo_root(), but returns None instead of raising.
 
@@ -221,7 +266,7 @@ def pathspec_matches(pattern: str, rel_path: str) -> bool:
 
 YAML_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
 
-_PROTECT_ITEM_KEYS = {"pattern", "regex", "message", "deny_user", "deny_group"}
+_PROTECT_ITEM_KEYS = {"pattern", "regex", "message", "deny_user", "deny_group", "branches"}
 
 
 def _strip_yaml_comment(line: str) -> str:
@@ -410,7 +455,10 @@ class Rule:
     Python `re` pattern searched against tracked paths, section 28) is
     set - never both, never neither. `deny_user`/`deny_group` narrow the
     rule to an optional, non-blanket scope (section 29); both empty means
-    the default blanket-block behavior of sections 10-14.
+    the default blanket-block behavior of sections 10-14. `branches`
+    narrows the rule to an optional set of branch-name glob patterns
+    (section 33); empty means the rule is unconditional (matches on every
+    branch, including detached HEAD) - the pre-section-33 default.
     """
 
     pattern: str | None
@@ -418,6 +466,7 @@ class Rule:
     regex: str | None = None
     deny_user: tuple[str, ...] = ()
     deny_group: tuple[str, ...] = ()
+    branches: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,20 +495,38 @@ def default_message_for(policy: Policy | None) -> str:
     return f"protected by chwrite policy — see {policy.filename}"
 
 
+def branch_condition_note(rule: Rule, branch: str | None) -> str:
+    """Suffix naming WHICH branch condition locked a file (SPEC.md 33.4).
+
+    Empty string for an unconditional rule (`rule.branches` empty) - this
+    is purely additive and never changes a rule with no branch condition.
+    For a branch-scoped rule, this is appended to whatever message would
+    otherwise be shown (explicit `message=...` or the 24.3 default) so a
+    blocked write always says *why*, not just *that*, it's blocked.
+    """
+    if not rule.branches:
+        return ""
+    joined = ",".join(rule.branches)
+    if branch is None:
+        return f' [branches="{joined}": HEAD is detached, branch-scoped rules apply by default]'
+    return f' [branches="{joined}": active on current branch "{branch}"]'
+
+
 VERSION_LINE_RE = re.compile(r"^version\s+(\d+)$")
 PROTECT_LINE_RE = re.compile(r"^protect\s+(.*)$")
 PROTECT_REGEX_LINE_RE = re.compile(r"^protect-regex\s+(.*)$")
 
 # A single trailing `key="quoted value"` or `key=bareword` option, anchored
 # to the end of the line. Repeatedly stripping matches of this from the end
-# lets message=/deny-user=/deny-group= appear in any order/combination
-# after the pathspec or regex body, same as the original message-only
-# grammar (section 24.1) extended for section 29's scope options.
+# lets message=/deny-user=/deny-group=/branches= appear in any order/
+# combination after the pathspec or regex body, same as the original
+# message-only grammar (section 24.1) extended for section 29's scope
+# options and section 33's branch condition.
 _TRAILING_OPTION_RE = re.compile(
-    r"^(?P<rest>.*)\s+(?P<key>message|deny-user|deny-group)="
+    r"^(?P<rest>.*)\s+(?P<key>message|deny-user|deny-group|branches)="
     r'(?P<value>"(?:[^"\\]|\\.)*"|\S+)$'
 )
-_KNOWN_OPTIONS = {"message", "deny-user", "deny-group"}
+_KNOWN_OPTIONS = {"message", "deny-user", "deny-group", "branches"}
 
 
 def _strip_trailing_options(text: str) -> tuple[str, dict[str, str]]:
@@ -485,8 +552,14 @@ def _strip_trailing_options(text: str) -> tuple[str, dict[str, str]]:
     return text.strip(), options
 
 
-def _parse_scope_value(raw: str | None, key: str, filename: str, lineno: int) -> tuple[str, ...]:
-    """Split a comma-separated deny-user=/deny-group= value into names."""
+def _parse_csv_value(raw: str | None, key: str, filename: str, lineno: int) -> tuple[str, ...]:
+    """Split a comma-separated `key=` value into names.
+
+    Shared by deny-user=/deny-group= (section 29, plain names) and
+    branches= (section 33, fnmatch glob patterns) - all three are "a
+    comma-separated list of strings" at the grammar level; what each list
+    element means is entirely up to the caller.
+    """
     if raw is None:
         return ()
     names = tuple(n.strip() for n in raw.split(",") if n.strip())
@@ -504,9 +577,10 @@ def _build_rule(
     options: dict[str, str],
 ) -> Rule:
     message = options.get("message")
-    deny_user = _parse_scope_value(options.get("deny-user"), "deny-user", filename, lineno)
-    deny_group = _parse_scope_value(options.get("deny-group"), "deny-group", filename, lineno)
-    return Rule(pattern, message, regex, deny_user, deny_group)
+    deny_user = _parse_csv_value(options.get("deny-user"), "deny-user", filename, lineno)
+    deny_group = _parse_csv_value(options.get("deny-group"), "deny-group", filename, lineno)
+    branches = _parse_csv_value(options.get("branches"), "branches", filename, lineno)
+    return Rule(pattern, message, regex, deny_user, deny_group, branches)
 
 
 def _parse_plain(text: str, filename: str) -> tuple[int, list[Rule]]:
@@ -554,7 +628,15 @@ def _parse_plain(text: str, filename: str) -> tuple[int, list[Rule]]:
     return version, rules
 
 
-def _scope_from_structured(value: object, key: str, filename: str, idx: int) -> tuple[str, ...]:
+def _string_list_from_structured(
+    value: object, key: str, filename: str, idx: int
+) -> tuple[str, ...]:
+    """Validate protect[idx].<key> as a JSON/TOML list of non-empty strings.
+
+    Shared by deny_user/deny_group (section 29) and branches (section 33) -
+    unlike the plain/YAML formats' comma-separated scalar, JSON and TOML
+    both have native list syntax, so the structured formats use it.
+    """
     if value is None:
         return ()
     if not isinstance(value, list):
@@ -613,9 +695,14 @@ def _parse_structured(data: object, filename: str) -> tuple[int, list[Rule]]:
         message: object = item_map.get("message")
         if message is not None and not isinstance(message, str):
             raise ChwriteError(f"{filename}: protect[{i}].message must be a string", 2)
-        deny_user = _scope_from_structured(item_map.get("deny_user"), "deny_user", filename, i)
-        deny_group = _scope_from_structured(item_map.get("deny_group"), "deny_group", filename, i)
-        rules.append(Rule(pattern, message, regex, deny_user, deny_group))  # pyright: ignore[reportUnknownArgumentType]
+        deny_user = _string_list_from_structured(
+            item_map.get("deny_user"), "deny_user", filename, i
+        )
+        deny_group = _string_list_from_structured(
+            item_map.get("deny_group"), "deny_group", filename, i
+        )
+        branches = _string_list_from_structured(item_map.get("branches"), "branches", filename, i)
+        rules.append(Rule(pattern, message, regex, deny_user, deny_group, branches))  # pyright: ignore[reportUnknownArgumentType]
     assert isinstance(version, int)
     return version, rules
 
@@ -654,7 +741,14 @@ def _parse_toml(path: str, filename: str) -> tuple[int, list[Rule]]:
 
 
 def _build_rule_from_yaml_item(item: dict[str, str | None], filename: str, idx: int) -> Rule:
-    unknown = set(item.keys()) - {"pattern", "regex", "message", "deny_user", "deny_group"}
+    unknown = set(item.keys()) - {
+        "pattern",
+        "regex",
+        "message",
+        "deny_user",
+        "deny_group",
+        "branches",
+    }
     if unknown:
         raise ChwriteError(
             f"{filename}: protect[{idx}] has unsupported keys in chwrite's YAML subset: "
@@ -669,11 +763,13 @@ def _build_rule_from_yaml_item(item: dict[str, str | None], filename: str, idx: 
         )
     message = item.get("message")
     # The chwrite YAML subset has no flow-sequence support (policy_yaml.py
-    # module docstring), so deny_user/deny_group are written the same way
-    # as the plain format: a single comma-separated scalar, not a list.
-    deny_user = _parse_scope_value(item.get("deny_user"), "deny_user", filename, idx)
-    deny_group = _parse_scope_value(item.get("deny_group"), "deny_group", filename, idx)
-    return Rule(pattern, message, regex, deny_user, deny_group)
+    # module docstring), so deny_user/deny_group/branches are all written
+    # the same way as the plain format: a single comma-separated scalar,
+    # not a list.
+    deny_user = _parse_csv_value(item.get("deny_user"), "deny_user", filename, idx)
+    deny_group = _parse_csv_value(item.get("deny_group"), "deny_group", filename, idx)
+    branches = _parse_csv_value(item.get("branches"), "branches", filename, idx)
+    return Rule(pattern, message, regex, deny_user, deny_group, branches)
 
 
 def find_policy_file(root: str) -> str | None:
@@ -730,7 +826,7 @@ def load_policy(root: str) -> Policy | None:
 
 
 def resolve_policy_files(root: str, policy: Policy | None) -> dict[str, ResolvedProtection]:
-    """Resolve every rule (pathspec or regex) via `git ls-files` (SPEC.md 5, 28).
+    """Resolve every rule (pathspec or regex) via `git ls-files` (SPEC.md 5, 28, 33).
 
     Pathspec rules resolve via `git ls-files -z -- <pathspec>`. Regex rules
     never resolve paths themselves - they `re.search()` against the same
@@ -738,18 +834,38 @@ def resolve_policy_files(root: str, policy: Policy | None) -> dict[str, Resolved
     the path-traversal/symlink-escape protections in section 18 apply
     identically either way (section 28).
 
+    A rule with a `branches=` condition (section 33) that does not match
+    the current branch (see `chwrite.gitutil.branch_matches`) contributes
+    nothing to the returned mapping at all - as far as apply/lock/status
+    are concerned, an inactive-on-this-branch rule looks exactly like a
+    rule that was never in the policy to begin with. This is deliberate:
+    it means reconcile()'s existing "no longer in policy -> unprotect"
+    handling (SPEC.md 7-8) is *also* what unprotects a file when a branch
+    condition goes from active to inactive across a checkout, with no
+    separate code path to keep in sync.
+
     Returns:
         {repo_relative_path: ResolvedProtection}. A file matched by more
-        than one rule is protected exactly once; the *last*-defined
-        matching rule wins for message/scope purposes (policy file order,
-        section 28's documented precedence).
+        than one *active* rule is protected exactly once; the *last*-
+        defined matching rule wins for message/scope purposes (policy
+        file order, section 28's documented precedence) - branch-inactive
+        rules are simply never candidates for that precedence at all.
     """
     mapping: dict[str, ResolvedProtection] = {}
     if policy is None:
         return mapping
     all_files: list[str] | None = None
+    branch: str | None = None
+    branch_resolved = False
     for rule in policy.rules:
+        if rule.branches:
+            if not branch_resolved:
+                branch = current_branch(root)
+                branch_resolved = True
+            if not branch_matches(branch, rule.branches):
+                continue
         message = rule.message if rule.message else default_message_for(policy)
+        message += branch_condition_note(rule, branch)
         resolved = ResolvedProtection(message, rule.deny_user, rule.deny_group)
         if rule.pattern is not None:
             proc = run_git(["ls-files", "-z", "--", rule.pattern], cwd=root)
@@ -796,6 +912,8 @@ def write_plain(path: str, version: int, rules: list[Rule]) -> None:
             line += f" deny-user={','.join(r.deny_user)}"
         if r.deny_group:
             line += f" deny-group={','.join(r.deny_group)}"
+        if r.branches:
+            line += f" branches={','.join(r.branches)}"
         lines.append(line)
     _write_text(path, "\n".join(lines) + "\n")
 
@@ -815,6 +933,8 @@ def write_json(path: str, version: int, rules: list[Rule]) -> None:
             item["deny_user"] = list(r.deny_user)
         if r.deny_group:
             item["deny_group"] = list(r.deny_group)
+        if r.branches:
+            item["branches"] = list(r.branches)
         protect.append(item)
     _write_text(path, json.dumps({"version": version, "protect": protect}, indent=2) + "\n")
 
@@ -836,6 +956,8 @@ def write_toml(path: str, version: int, rules: list[Rule]) -> None:
             lines.append("deny_user = [" + ", ".join(_toml_quote(n) for n in r.deny_user) + "]")
         if r.deny_group:
             lines.append("deny_group = [" + ", ".join(_toml_quote(n) for n in r.deny_group) + "]")
+        if r.branches:
+            lines.append("branches = [" + ", ".join(_toml_quote(n) for n in r.branches) + "]")
     _write_text(path, "\n".join(lines) + "\n")
 
 
@@ -858,6 +980,8 @@ def write_yaml(path: str, version: int, rules: list[Rule]) -> None:
                 lines.append(f"    deny_user: {_toml_quote(','.join(r.deny_user))}")
             if r.deny_group:
                 lines.append(f"    deny_group: {_toml_quote(','.join(r.deny_group))}")
+            if r.branches:
+                lines.append(f"    branches: {_toml_quote(','.join(r.branches))}")
     _write_text(path, "\n".join(lines) + "\n")
 
 
@@ -1834,15 +1958,32 @@ def _protection_message(root: str, rel: str) -> str | None:
     specific, more recently expressed intent"). Among policy rules
     themselves, the *last*-defined matching rule wins (section 28's
     documented precedence), matching resolve_policy_files().
+
+    A rule whose `branches=` condition (section 33) does not match the
+    current branch contributes nothing here, same as it contributes
+    nothing to resolve_policy_files() - so a file that would otherwise be
+    caught by a branch-scoped rule reports as unprotected on a branch
+    where that rule isn't active, even before `chwrite apply` has ever run
+    on this branch (check-path's whole point is to warn before a would-be
+    write, not only after state.json has caught up).
     """
     state = load_state(root)
     policy = load_policy(root)
     entry = state["files"].get(rel)
     rule_message = None
     if policy:
+        branch: str | None = None
+        branch_resolved = False
         for rule in policy.rules:
+            if rule.branches:
+                if not branch_resolved:
+                    branch = current_branch(root)
+                    branch_resolved = True
+                if not branch_matches(branch, rule.branches):
+                    continue
             if _rule_matches(rule, rel):
-                rule_message = rule.message or default_message_for(policy)
+                base = rule.message or default_message_for(policy)
+                rule_message = base + branch_condition_note(rule, branch)
     if entry and entry.get("locked"):
         return entry.get("message") or rule_message or ADHOC_DEFAULT_MESSAGE
     return rule_message
@@ -2022,16 +2163,56 @@ def _print_deny_group_caveat(state: StateDoc) -> None:
             print(f"  {rel}")
 
 
+def _branch_inactive_rules(
+    policy: Policy | None, branch: str | None
+) -> list[tuple[str, tuple[str, ...]]]:
+    """Branch-scoped rules (section 33) that don't match `branch`.
+
+    Returns [(pattern_or_regex_text, branches)] for status's "inactive on
+    this branch" note - a rule-level view, not a resolved-file view,
+    deliberately: it costs no extra `git ls-files`/`re.search` work beyond
+    what's already loaded, and "this rule doesn't apply here" is exactly
+    what a human needs to know when a file they expected to see protected
+    is missing from the LEVEL/BACKEND/FILE table above.
+    """
+    if policy is None:
+        return []
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for rule in policy.rules:
+        if rule.branches and not branch_matches(branch, rule.branches):
+            text = rule.pattern if rule.pattern is not None else rule.regex
+            assert text is not None
+            out.append((text, rule.branches))
+    return out
+
+
+def _print_branch_inactive_note(policy: Policy | None, branch: str | None) -> None:
+    """Report branch-scoped rules that don't apply here (SPEC.md 33.5) -
+    the "inactive on this branch" counterpart to the LEVEL/BACKEND/FILE
+    table above, which by construction only ever lists *active*
+    protection. Without this, a file missing from that table because its
+    rule's branches= condition doesn't match looks identical to a file
+    that was simply never protected at all."""
+    inactive = _branch_inactive_rules(policy, branch)
+    if inactive:
+        print()
+        print("INACTIVE ON THIS BRANCH (branches= condition not met):")
+        for text, branches in inactive:
+            print(f'  {text}  branches="{",".join(branches)}"')
+
+
 def cmd_status(_args: argparse.Namespace) -> int:
     """Show current protection state, inspecting real OS state (section 9)."""
     root = repo_root()
     policy = load_policy(root)
     state = load_state(root)
     files = state["files"]
+    branch = current_branch(root)
 
     print("chwrite v1")
     print()
     print(f"Policy: {policy.path if policy else '(none)'}")
+    print(f"Branch: {branch if branch is not None else '(detached HEAD)'}")
     print()
 
     rows: list[tuple[str, str, str]] = []
@@ -2059,6 +2240,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
     print(f"{violation_count} violations")
 
     _print_deny_group_caveat(state)
+    _print_branch_inactive_note(policy, branch)
 
     return 1 if violation_count else 0
 
@@ -2150,9 +2332,13 @@ def _doctor_print_repo_section() -> None:
         root = repo_root()
         print()
         print(f"Repository: {root}")
+        branch = current_branch(root)
+        print(f"Branch: {branch if branch is not None else '(detached HEAD)'}")
         filename = find_policy_file(root)
         print(f"Policy file: {filename if filename else '(none)'}")
+        policy = load_policy(root)
         _print_deny_group_caveat(load_state(root))
+        _print_branch_inactive_note(policy, branch)
     except ChwriteError as e:
         print()
         print(f"Not currently inside a git repository ({e})")
@@ -2279,6 +2465,7 @@ def cmd_add(args: _AddArgs) -> int:
                 r.regex,
                 r.deny_user,
                 r.deny_group,
+                r.branches,
             )
             break
     else:
