@@ -315,6 +315,132 @@ def test_reconcile_scoped_adhoc_lock_self_heals_via_scoped_backend(
     assert any(e.kind == "relocked" and e.rel == "scratch.txt" for e in report)
 
 
+# ---------------------------------------------------------------------------
+# branch-conditional rules (SPEC.md section 33)
+# ---------------------------------------------------------------------------
+
+
+def test_reconcile_locks_on_matching_branch_unlocks_after_checkout_to_non_matching(
+    repo: str, posix_backend: None
+) -> None:
+    """The core section 33.3 scenario: apply on a branch the rule matches
+    locks the file; checking out a branch it doesn't match and re-applying
+    unlocks it again - using a real temp git repo and a real `git
+    checkout`, not a mocked branch name."""
+    (Path(repo) / ".write_protect").write_text(
+        'version 1\n\nprotect generated.txt branches="main,release/*"\n'
+    )
+    (Path(repo) / "generated.txt").write_text("x")
+    _commit_all(repo)
+    subprocess.run(["git", "branch", "-m", "main"], cwd=repo, check=True)
+
+    state = load_state(repo)
+    _, report = reconcile(repo, state)
+    save_state(repo, state)
+    assert report[0].kind == "locked"
+    assert state["files"]["generated.txt"]["locked"] is True
+    with pytest.raises(PermissionError):
+        (Path(repo) / "generated.txt").write_text("changed on main")
+
+    subprocess.run(["git", "checkout", "-q", "-b", "regen-branch"], cwd=repo, check=True)
+    state = load_state(repo)
+    _, report = reconcile(repo, state)
+    save_state(repo, state)
+
+    assert "generated.txt" not in state["files"]
+    assert any(e.kind == "removed" and e.rel == "generated.txt" for e in report)
+    (Path(repo) / "generated.txt").write_text("changed on regen-branch")
+    assert (Path(repo) / "generated.txt").read_text() == "changed on regen-branch"
+
+    # And checking back out to main re-locks it (full round trip).
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
+    state = load_state(repo)
+    _, report = reconcile(repo, state)
+    save_state(repo, state)
+    assert any(e.kind == "locked" and e.rel == "generated.txt" for e in report)
+    with pytest.raises(PermissionError):
+        (Path(repo) / "generated.txt").write_text("changed again on main")
+
+
+def test_reconcile_unconditional_rule_unaffected_by_branch_changes(
+    repo: str, posix_backend: None
+) -> None:
+    (Path(repo) / ".write_protect").write_text("version 1\n\nprotect always.txt\n")
+    (Path(repo) / "always.txt").write_text("x")
+    _commit_all(repo)
+
+    state = load_state(repo)
+    reconcile(repo, state)
+    save_state(repo, state)
+    assert state["files"]["always.txt"]["locked"] is True
+
+    subprocess.run(["git", "checkout", "-q", "-b", "some-other-branch"], cwd=repo, check=True)
+    state = load_state(repo)
+    _, report = reconcile(repo, state)
+    save_state(repo, state)
+
+    assert report == []  # unconditional rule: nothing changes across a branch switch
+    assert state["files"]["always.txt"]["locked"] is True
+
+
+def test_reconcile_detached_head_keeps_branch_scoped_rule_active(
+    repo: str, posix_backend: None
+) -> None:
+    (Path(repo) / ".write_protect").write_text(
+        'version 1\n\nprotect generated.txt branches="main"\n'
+    )
+    (Path(repo) / "generated.txt").write_text("x")
+    _commit_all(repo)
+    sha = (
+        subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True)
+        .stdout.decode()
+        .strip()
+    )
+    subprocess.run(["git", "checkout", "-q", sha], cwd=repo, check=True)
+
+    state = load_state(repo)
+    _, report = reconcile(repo, state)
+    save_state(repo, state)
+
+    assert report[0].kind == "locked"
+    assert state["files"]["generated.txt"]["locked"] is True
+
+
+def test_reconcile_per_worktree_divergence(
+    repo: str, posix_backend: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two worktrees of the same repo, on different branches, legitimately
+    disagree about what's currently protected (SPEC.md section 33.4)."""
+    (Path(repo) / ".write_protect").write_text(
+        'version 1\n\nprotect generated.txt branches="main"\n'
+    )
+    (Path(repo) / "generated.txt").write_text("x")
+    _commit_all(repo)
+    subprocess.run(["git", "branch", "-m", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "branch", "regen-branch"], cwd=repo, check=True)
+
+    wt_dir = tmp_path / "other-worktree"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", str(wt_dir), "regen-branch"], cwd=repo, check=True
+    )
+
+    state_main = load_state(repo)
+    _, report_main = reconcile(repo, state_main)
+    save_state(repo, state_main)
+    assert report_main[0].kind == "locked"
+
+    state_wt = load_state(str(wt_dir))
+    _, report_wt = reconcile(str(wt_dir), state_wt)
+    save_state(str(wt_dir), state_wt)
+    assert report_wt == []  # branches="main" doesn't match regen-branch
+    assert "generated.txt" not in state_wt["files"]
+
+    with pytest.raises(PermissionError):
+        (Path(repo) / "generated.txt").write_text("changed on main")
+    (wt_dir / "generated.txt").write_text("changed on regen-branch")
+    assert (wt_dir / "generated.txt").read_text() == "changed on regen-branch"
+
+
 @pytest.mark.skipif(
     __import__("sys").platform != "darwin", reason="exercises the real macOS ACL deny backend"
 )

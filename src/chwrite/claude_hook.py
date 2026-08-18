@@ -9,8 +9,20 @@ import re
 import sys
 
 from chwrite.errors import ChwriteError
-from chwrite.gitutil import pathspec_matches, resolve_target_path, try_repo_root
-from chwrite.policy import ADHOC_DEFAULT_MESSAGE, Rule, default_message_for, load_policy
+from chwrite.gitutil import (
+    branch_matches,
+    current_branch,
+    pathspec_matches,
+    resolve_target_path,
+    try_repo_root,
+)
+from chwrite.policy import (
+    ADHOC_DEFAULT_MESSAGE,
+    Rule,
+    branch_condition_note,
+    default_message_for,
+    load_policy,
+)
 from chwrite.state import load_state
 
 CLAUDE_HOOK_MATCHER = "Edit|MultiEdit|Write|NotebookEdit"
@@ -38,15 +50,32 @@ def _protection_message(root: str, rel: str) -> str | None:
     specific, more recently expressed intent"). Among policy rules
     themselves, the *last*-defined matching rule wins (section 28's
     documented precedence), matching resolve_policy_files().
+
+    A rule whose `branches=` condition (section 33) does not match the
+    current branch contributes nothing here, same as it contributes
+    nothing to resolve_policy_files() - so a file that would otherwise be
+    caught by a branch-scoped rule reports as unprotected on a branch
+    where that rule isn't active, even before `chwrite apply` has ever run
+    on this branch (check-path's whole point is to warn before a would-be
+    write, not only after state.json has caught up).
     """
     state = load_state(root)
     policy = load_policy(root)
     entry = state["files"].get(rel)
     rule_message = None
     if policy:
+        branch: str | None = None
+        branch_resolved = False
         for rule in policy.rules:
+            if rule.branches:
+                if not branch_resolved:
+                    branch = current_branch(root)
+                    branch_resolved = True
+                if not branch_matches(branch, rule.branches):
+                    continue
             if _rule_matches(rule, rel):
-                rule_message = rule.message or default_message_for(policy)
+                base = rule.message or default_message_for(policy)
+                rule_message = base + branch_condition_note(rule, branch)
     if entry and entry.get("locked"):
         return entry.get("message") or rule_message or ADHOC_DEFAULT_MESSAGE
     return rule_message

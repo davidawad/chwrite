@@ -353,3 +353,102 @@ def test_cmd_check_path_regex_rule_via_stdin_hook(
     code = _claude_hook_main()
     assert code == 2
     assert "append-only" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# branch-conditional rules (SPEC.md section 33)
+# ---------------------------------------------------------------------------
+
+
+def _repo_with_branch_policy(tmp_path: Path) -> str:
+    root = _init_repo(tmp_path)
+    (Path(root) / "generated.txt").write_text("x")
+    (Path(root) / ".write_protect").write_text(
+        'version 1\n\nprotect generated.txt branches="main,release/*" '
+        'message="Generated; edit only on the regen branch"\n'
+    )
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+    return root
+
+
+def test_protection_message_branch_rule_active_includes_condition_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _repo_with_branch_policy(tmp_path)
+    monkeypatch.setattr("chwrite.claude_hook.current_branch", lambda _root: "main")
+
+    message = _protection_message(root, "generated.txt")
+    assert message is not None
+    assert "Generated; edit only on the regen branch" in message
+    assert 'branches="main,release/*"' in message
+    assert 'active on current branch "main"' in message
+
+
+def test_protection_message_branch_rule_inactive_is_unprotected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _repo_with_branch_policy(tmp_path)
+    monkeypatch.setattr("chwrite.claude_hook.current_branch", lambda _root: "regen-branch")
+
+    assert _protection_message(root, "generated.txt") is None
+
+
+def test_protection_message_branch_rule_detached_head_stays_protected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _repo_with_branch_policy(tmp_path)
+    monkeypatch.setattr("chwrite.claude_hook.current_branch", lambda _root: None)
+
+    message = _protection_message(root, "generated.txt")
+    assert message is not None
+    assert "HEAD is detached" in message
+
+
+def test_cmd_check_path_branch_inactive_rule_reports_unprotected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _repo_with_branch_policy(tmp_path)
+    monkeypatch.chdir(root)
+    monkeypatch.setattr("chwrite.claude_hook.current_branch", lambda _root: "regen-branch")
+
+    code = cmd_check_path(argparse.Namespace(path="generated.txt", claude_hook=False))
+    assert code == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_cmd_check_path_branch_active_rule_blocks_with_condition_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _repo_with_branch_policy(tmp_path)
+    monkeypatch.chdir(root)
+    monkeypatch.setattr("chwrite.claude_hook.current_branch", lambda _root: "main")
+
+    code = cmd_check_path(argparse.Namespace(path="generated.txt", claude_hook=False))
+    assert code == 1
+    assert 'branches="main,release/*"' in capsys.readouterr().err
+
+
+def test_protection_message_stale_locked_state_wins_even_when_branch_inactive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SPEC.md 33.8: if state.json still has a stale `locked: true` entry
+    from before a checkout (hooks not installed / apply not yet re-run),
+    check-path still reports it protected - the OS-level lock from the
+    previous branch is, as a matter of fact, still actually in place."""
+    root = _repo_with_branch_policy(tmp_path)
+    state = load_state(root)
+    state["files"]["generated.txt"] = {
+        "backend": "posix-chmod",
+        "level": "READONLY",
+        "original_mode": 0o644,
+        "locked": True,
+        "source": "policy",
+        "message": "stale message from a previous apply on main",
+        "hard": False,
+    }
+    save_state(root, state)
+    monkeypatch.setattr("chwrite.claude_hook.current_branch", lambda _root: "regen-branch")
+
+    message = _protection_message(root, "generated.txt")
+    assert message == "stale message from a previous apply on main"

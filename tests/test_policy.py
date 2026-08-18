@@ -503,3 +503,233 @@ def test_write_yaml_round_trips_regex_and_scope(tmp_path) -> None:
     policy = load_policy(root)
     assert policy is not None
     assert policy.rules == tuple(rules)
+
+
+# ---------------------------------------------------------------------------
+# branch-conditional rules (SPEC.md section 33)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_plain_branches_scope() -> None:
+    _, rules = _parse_plain(
+        'version 1\nprotect a.txt branches="main,release/*"\n', ".write_protect"
+    )
+    assert rules[0].branches == ("main", "release/*")
+
+
+def test_parse_plain_branches_bareword_value() -> None:
+    _, rules = _parse_plain("version 1\nprotect a.txt branches=main\n", ".write_protect")
+    assert rules[0].branches == ("main",)
+
+
+def test_parse_plain_branches_with_message_and_deny_user_any_order() -> None:
+    _, rules = _parse_plain(
+        'version 1\nprotect a.txt branches="main" message="careful" deny-user=bob\n',
+        ".write_protect",
+    )
+    assert rules[0].branches == ("main",)
+    assert rules[0].message == "careful"
+    assert rules[0].deny_user == ("bob",)
+
+
+def test_parse_plain_empty_branches_value_is_config_error() -> None:
+    with pytest.raises(ChwriteError):
+        _parse_plain("version 1\nprotect a.txt branches=,\n", ".write_protect")
+
+
+def test_parse_plain_no_branches_defaults_to_unconditional() -> None:
+    _, rules = _parse_plain("version 1\nprotect a.txt\n", ".write_protect")
+    assert rules[0].branches == ()
+
+
+def test_parse_json_branches_list() -> None:
+    text = '{"version": 1, "protect": [{"pattern": "a", "branches": ["main", "release/*"]}]}'
+    _, rules = _parse_json(text, ".write_protect.json")
+    assert rules[0].branches == ("main", "release/*")
+
+
+def test_parse_json_branches_not_a_list_is_config_error() -> None:
+    text = '{"version": 1, "protect": [{"pattern": "a", "branches": "main"}]}'
+    with pytest.raises(ChwriteError):
+        _parse_json(text, ".write_protect.json")
+
+
+def test_parse_json_branches_empty_list_is_config_error() -> None:
+    text = '{"version": 1, "protect": [{"pattern": "a", "branches": []}]}'
+    with pytest.raises(ChwriteError):
+        _parse_json(text, ".write_protect.json")
+
+
+def test_parse_toml_branches_list(tmp_path) -> None:
+    root = _init_repo(tmp_path)
+    (tmp_path / ".write_protect.toml").write_text(
+        'version = 1\n\n[[protect]]\npattern = "a"\nbranches = ["main", "release/*"]\n'
+    )
+    policy = load_policy(root)
+    assert policy is not None
+    assert policy.rules[0].branches == ("main", "release/*")
+
+
+def test_parse_yaml_branches_csv_scalar(tmp_path) -> None:
+    root = _init_repo(tmp_path)
+    (tmp_path / ".write_protect.yaml").write_text(
+        "version: 1\nprotect:\n  - pattern: a\n    branches: main,release/*\n"
+    )
+    policy = load_policy(root)
+    assert policy is not None
+    assert policy.rules[0].branches == ("main", "release/*")
+
+
+def test_parse_yaml_unknown_key_still_rejected_alongside_branches(tmp_path) -> None:
+    root = _init_repo(tmp_path)
+    (tmp_path / ".write_protect.yaml").write_text(
+        "version: 1\nprotect:\n  - pattern: a\n    branches: main\n    bogus: x\n"
+    )
+    with pytest.raises(ChwriteError):
+        load_policy(root)
+
+
+def test_write_plain_round_trips_branches(tmp_path) -> None:
+    path = str(tmp_path / ".write_protect")
+    rules = [Rule("a.txt", "msg", None, (), (), ("main", "release/*"))]
+    write_plain(path, 1, rules)
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    assert "branches=main,release/*" in text
+    _, parsed = _parse_plain(text, ".write_protect")
+    assert parsed == rules
+
+
+def test_write_json_round_trips_branches(tmp_path) -> None:
+    root = _init_repo(tmp_path)
+    path = str(tmp_path / ".write_protect.json")
+    rules = [Rule("a.txt", "msg", None, (), (), ("main", "release/*"))]
+    write_json(path, 1, rules)
+    policy = load_policy(root)
+    assert policy is not None
+    assert policy.rules == tuple(rules)
+
+
+def test_write_toml_round_trips_branches(tmp_path) -> None:
+    root = _init_repo(tmp_path)
+    path = str(tmp_path / ".write_protect.toml")
+    rules = [Rule("a.txt", "msg", None, (), (), ("main", "release/*"))]
+    write_toml(path, 1, rules)
+    policy = load_policy(root)
+    assert policy is not None
+    assert policy.rules == tuple(rules)
+
+
+def test_write_yaml_round_trips_branches(tmp_path) -> None:
+    root = _init_repo(tmp_path)
+    path = str(tmp_path / ".write_protect.yaml")
+    rules = [Rule("a.txt", "msg", None, (), (), ("main", "release/*"))]
+    write_yaml(path, 1, rules)
+    policy = load_policy(root)
+    assert policy is not None
+    assert policy.rules == tuple(rules)
+
+
+def test_branch_condition_note_empty_for_unconditional_rule() -> None:
+    assert policy_mod.branch_condition_note(Rule("a.txt", None), "main") == ""
+
+
+def test_branch_condition_note_mentions_branch_and_pattern() -> None:
+    note = policy_mod.branch_condition_note(Rule("a.txt", None, None, (), (), ("main",)), "main")
+    assert 'branches="main"' in note
+    assert '"main"' in note
+
+
+def test_branch_condition_note_detached_head_wording() -> None:
+    note = policy_mod.branch_condition_note(Rule("a.txt", None, None, (), (), ("main",)), None)
+    assert "detached" in note
+
+
+def test_resolve_policy_files_skips_rule_inactive_on_current_branch(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _init_repo(tmp_path)
+    (tmp_path / "a.txt").write_text("x")
+    (tmp_path / ".write_protect").write_text('version 1\n\nprotect a.txt branches="release/*"\n')
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+
+    monkeypatch.setattr("chwrite.policy.current_branch", lambda _root: "feature-x")
+    policy = load_policy(root)
+    resolved = resolve_policy_files(root, policy)
+    assert resolved == {}
+
+
+def test_resolve_policy_files_includes_rule_active_on_current_branch(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _init_repo(tmp_path)
+    (tmp_path / "a.txt").write_text("x")
+    (tmp_path / ".write_protect").write_text('version 1\n\nprotect a.txt branches="main"\n')
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+
+    monkeypatch.setattr("chwrite.policy.current_branch", lambda _root: "main")
+    policy = load_policy(root)
+    resolved = resolve_policy_files(root, policy)
+    assert "a.txt" in resolved
+    assert 'branches="main"' in resolved["a.txt"].message
+    assert 'active on current branch "main"' in resolved["a.txt"].message
+
+
+def test_resolve_policy_files_detached_head_treats_branch_rule_as_active(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _init_repo(tmp_path)
+    (tmp_path / "a.txt").write_text("x")
+    (tmp_path / ".write_protect").write_text('version 1\n\nprotect a.txt branches="main"\n')
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+
+    monkeypatch.setattr("chwrite.policy.current_branch", lambda _root: None)
+    policy = load_policy(root)
+    resolved = resolve_policy_files(root, policy)
+    assert "a.txt" in resolved
+    assert "HEAD is detached" in resolved["a.txt"].message
+
+
+def test_resolve_policy_files_unconditional_rule_never_calls_current_branch(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A policy with no branches= rules at all must never pay the cost of
+    resolving the current branch (SPEC.md 33.6)."""
+    root = _init_repo(tmp_path)
+    (tmp_path / "a.txt").write_text("x")
+    (tmp_path / ".write_protect").write_text("version 1\n\nprotect a.txt\n")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+
+    def _boom(_root: str) -> None:
+        raise AssertionError("current_branch() should not be called for unconditional rules")
+
+    monkeypatch.setattr("chwrite.policy.current_branch", _boom)
+    policy = load_policy(root)
+    resolved = resolve_policy_files(root, policy)
+    assert "a.txt" in resolved
+    assert resolved["a.txt"].message == default_message_for(policy)
+
+
+def test_resolve_policy_files_last_active_matching_rule_wins_message_over_branches(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An inactive-on-this-branch rule must not participate in the "last
+    matching rule wins" precedence at all (section 28/33)."""
+    root = _init_repo(tmp_path)
+    (tmp_path / "a.txt").write_text("x")
+    (tmp_path / ".write_protect").write_text(
+        "version 1\n\n"
+        'protect a.txt message="first"\n'
+        'protect a.txt branches="release/*" message="second (branch-scoped, inactive here)"\n'
+    )
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+
+    monkeypatch.setattr("chwrite.policy.current_branch", lambda _root: "main")
+    policy = load_policy(root)
+    resolved = resolve_policy_files(root, policy)
+    assert resolved["a.txt"].message == "first"

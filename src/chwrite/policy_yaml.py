@@ -1,16 +1,17 @@
-"""YAML-subset parser for .write_protect.yaml/.yml policy files (SPEC.md 24.2, 28, 29).
+"""YAML-subset parser for .write_protect.yaml/.yml policy files (SPEC.md 24.2, 28, 29, 33).
 
 This is NOT a general YAML parser. It supports exactly: a top-level
 mapping with a scalar "version" key and a "protect" block-sequence of
-mappings with string "pattern"/"regex"/"message"/"deny_user"/"deny_group"
-keys, "#" comments, and 2-space indentation. Anchors, multi-document
-streams, flow collections, and non-string scalars are explicitly rejected
-rather than silently misinterpreted, per SPEC.md section 24.2. Because
-flow sequences aren't supported, deny_user/deny_group are written as a
-single comma-separated scalar (like the plain format's `deny-user=a,b`),
-not a YAML list - policy.py is responsible for splitting that string and
-for all cross-field validation (exactly one of pattern/regex, etc.); this
-module only extracts the raw key/value structure.
+mappings with string "pattern"/"regex"/"message"/"deny_user"/"deny_group"/
+"branches" keys, "#" comments, and 2-space indentation. Anchors,
+multi-document streams, flow collections, and non-string scalars are
+explicitly rejected rather than silently misinterpreted, per SPEC.md
+section 24.2. Because flow sequences aren't supported, deny_user/
+deny_group/branches are written as a single comma-separated scalar (like
+the plain format's `deny-user=a,b`), not a YAML list - policy.py is
+responsible for splitting that string and for all cross-field validation
+(exactly one of pattern/regex, etc.); this module only extracts the raw
+key/value structure.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from chwrite.errors import ChwriteError
 
 YAML_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
 
-_PROTECT_ITEM_KEYS = {"pattern", "regex", "message", "deny_user", "deny_group"}
+_PROTECT_ITEM_KEYS = {"pattern", "regex", "message", "deny_user", "deny_group", "branches"}
 
 
 def _strip_yaml_comment(line: str) -> str:
